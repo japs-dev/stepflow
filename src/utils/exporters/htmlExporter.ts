@@ -108,7 +108,18 @@ export async function buildHtmlPlayerString(rawProject: SopProject): Promise<str
       ...s,
       renderedDescription: parseMarkdownToHtml(s.description),
     }));
-  const sortedProject = { ...project, steps: sortedSteps };
+
+  // Omit redundant raw image data from the embedded client JSON payload to avoid doubling the export file size
+  const clientSteps = sortedSteps.map((s) => ({
+    ...s,
+    image: s.image
+      ? {
+          ...s.image,
+          originalImagePath: s.image.annotatedCachePath ? '' : s.image.originalImagePath,
+        }
+      : undefined,
+  }));
+  const sortedProject = { ...project, steps: clientSteps };
   const safeProjectJson = JSON.stringify(sortedProject)
     .replace(/</g, '\\u003c')
     .replace(/>/g, '\\u003e')
@@ -138,7 +149,10 @@ export async function buildHtmlPlayerString(rawProject: SopProject): Promise<str
 
   if (hasCoverPage) {
     if (cover.backgroundType === 'image' && cover.backgroundImage) {
-      coverStyle = `background-image: url('${cover.backgroundImage}'); background-size: cover; background-position: center;`;
+      const safeBg = cover.backgroundImage.startsWith('data:')
+        ? cover.backgroundImage
+        : encodeURI(cover.backgroundImage).replace(/'/g, '%27');
+      coverStyle = `background-image: url('${safeBg}'); background-size: cover; background-position: center;`;
       isCustomCover = true;
       const opacity = cover.backgroundOverlayOpacity ?? 0.45;
       overlayHtml = `<div class="cover-overlay" style="opacity: ${opacity};"></div>`;

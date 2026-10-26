@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf';
 import { DEFAULT_COVER_PAGE_SETTINGS, type SopProject, type CalloutType } from '../../types/sop';
 import { renderAnnotatedImage, prepareExportProject, getSafeFileName } from './imageHelper';
+import { stripMarkdown } from '../markdownHelper';
 
 function hexToRgb(hex?: string, fallback: [number, number, number] = [37, 99, 235]): [number, number, number] {
   if (!hex) return fallback;
@@ -390,12 +391,7 @@ export async function buildPdfDocument(project: SopProject): Promise<jsPDF> {
       doc.setFont('helvetica', 'normal');
       doc.setTextColor(51, 65, 85);
 
-      const cleanDesc = step.description
-        .replace(/^###\s+/gm, '')
-        .replace(/^##\s+/gm, '')
-        .replace(/^#\s+/gm, '')
-        .replace(/\*\*(.*?)\*\*/g, '$1')
-        .replace(/\*(.*?)\*/g, '$1');
+      const cleanDesc = stripMarkdown(step.description, { preserveNewlines: true });
 
       const descLines = doc.splitTextToSize(cleanDesc, cardContentW);
       doc.text(descLines, cardContentX, currentY + 8);

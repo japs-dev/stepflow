@@ -128,7 +128,7 @@ const electronAPI: IpcBridge = {
   },
 
   // Workspace & Shared Storage
-  getWorkspacePath: (): Promise<{ path: string; isCustom: boolean; defaultPath: string }> => {
+  getWorkspacePath: (): Promise<{ path: string; isCustom: boolean; defaultPath: string; mcpServerPath?: string }> => {
     return ipcRenderer.invoke('get-workspace-path');
   },
   changeWorkspacePath: (): Promise<{ success: boolean; canceled?: boolean; newPath?: string; error?: string }> => {
@@ -141,11 +141,11 @@ const electronAPI: IpcBridge = {
     return ipcRenderer.invoke('open-workspace-folder');
   },
   onWorkspacePathChanged: (
-    callback: (data: { path: string; isCustom: boolean; defaultPath: string }) => void
+    callback: (data: { path: string; isCustom: boolean; defaultPath: string; mcpServerPath?: string }) => void
   ): (() => void) => {
     const handler = (
       _event: IpcRendererEvent,
-      data: { path: string; isCustom: boolean; defaultPath: string }
+      data: { path: string; isCustom: boolean; defaultPath: string; mcpServerPath?: string }
     ) => {
       callback(data);
     };

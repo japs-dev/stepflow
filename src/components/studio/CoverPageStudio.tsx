@@ -103,12 +103,20 @@ export const CoverPageStudio: React.FC = () => {
     }
 
     const reader = new FileReader();
-    reader.onload = (uploadEvent) => {
+    reader.onload = async (uploadEvent) => {
       const dataUrl = uploadEvent.target?.result as string;
       if (dataUrl) {
+        let finalImage = dataUrl;
+        if (typeof window !== 'undefined' && window.electronAPI?.importPastedImage) {
+          try {
+            finalImage = await window.electronAPI.importPastedImage(dataUrl);
+          } catch (err) {
+            console.warn('Failed to save cover image to assets folder:', err);
+          }
+        }
         updateCoverPageSettings({
           backgroundType: 'image',
-          backgroundImage: dataUrl,
+          backgroundImage: finalImage,
           backgroundOverlayOpacity: cover.backgroundOverlayOpacity || 0.45
         });
       }

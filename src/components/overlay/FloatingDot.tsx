@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect, useCallback, useMemo } from 'react';
 import {
   Camera,
   Crop,
@@ -9,10 +9,12 @@ import {
   Search,
   Copy,
   RefreshCw,
-  Sparkles
+  Sparkles,
 } from 'lucide-react';
 import { useSopStore } from '../../store/useSopStore';
 import { ErrorFaqItem, OcrAnalysisResult } from '../../types/sop';
+import { RELEASE_FEATURES } from '../../config/releaseFeatures';
+import { isMacPlatform, getCmdLabel } from '../../utils/platform';
 import { renderMarkdownBlocks } from '../../utils/markdownHelper';
 import { ErrorSearchModal } from '../faq/ErrorSearchModal';
 
@@ -27,6 +29,8 @@ type DotState =
 interface FloatingDotProps {
   onTriggerCapture?: () => Promise<string | null>;
 }
+
+const EXPAND_PADDING_DELTA_PX = 8; // px-1.5 (12px) -> px-2.5 (20px)
 
 export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) => {
   const {
@@ -47,6 +51,15 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
   const [dotState, setDotState] = useState<DotState>('collapsed');
   const [progressWidth, setProgressWidth] = useState(100);
 
+  // Cursor-anchored pill expansion state
+  const [isPillHovered, setIsPillHovered] = useState(false);
+  const [anchorOffsetX, setAnchorOffsetX] = useState(0);
+  const [labelWidths, setLabelWidths] = useState<number[]>([38, 38, 38]);
+
+  const buttonRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const labelRefs = useRef<(HTMLSpanElement | null)[]>([]);
+  const hoverLeaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   // Drag and Drop & OCR state
   const [isDragOver, setIsDragOver] = useState(false);
   const [ocrResult, setOcrResult] = useState<OcrAnalysisResult | null>(null);
@@ -61,44 +74,18 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Clean up timers on unmount
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-    };
-  }, []);
-
-  // Sync retakeStepId from IPC if changed externally
-  useEffect(() => {
-    if (typeof window !== 'undefined' && window.electronAPI?.onRetakeStepIdChanged) {
-      const unsub = window.electronAPI.onRetakeStepIdChanged((id) => {
-        setRetakeStepId(id);
-      });
-      return unsub;
-    }
-  }, [setRetakeStepId]);
-
-  // Listen to Global Search HUD shortcut (Ctrl+Shift+F)
-  useEffect(() => {
-    if (typeof window !== 'undefined' && window.electronAPI?.onOpenSearchHud) {
-      const unsub = window.electronAPI.onOpenSearchHud(() => {
-        setDotState('search');
-        notifyElectronSize('search');
-      });
-      return unsub;
-    }
-  }, []);
-
   const stepCount = activeProject?.steps.length || 0;
   const currentStep = activeProject?.steps.find((s) => s.id === activeStepId);
   const retakeStep = activeProject?.steps.find((s) => s.id === retakeStepId);
   const isRetakeMode = Boolean(retakeStepId && retakeStep);
-  const isMac = typeof window !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(window.navigator.platform || window.navigator.userAgent);
-  const cmdLabel = isMac ? 'Cmd' : 'Ctrl';
+  const isMac = isMacPlatform();
+  const cmdLabel = getCmdLabel();
+  const shortcutFullLabel = isMac ? '⌘⇧S' : 'Ctrl+⇧S';
+  const shortcutAreaLabel = isMac ? '⌘⇧A' : 'Ctrl+⇧A';
+  const shortcutSearchLabel = isMac ? '⌘⇧F' : 'Ctrl+⇧F';
 
   // Update overlay window size via Electron IPC
-  const notifyElectronSize = (mode: DotState) => {
+  const notifyElectronSize = useCallback((mode: DotState) => {
     if (typeof window !== 'undefined' && window.electronAPI?.setOverlaySize) {
       if (mode === 'collapsed') {
         window.electronAPI.setOverlaySize('collapsed');
@@ -114,135 +101,310 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
         window.electronAPI.setOverlaySize('expanded');
       }
     }
+  }, []);
+
+  const transitionToState = useCallback(
+    (nextState: DotState) => {
+      if (hoverLeaveTimeoutRef.current) {
+        clearTimeout(hoverLeaveTimeoutRef.current);
+        hoverLeaveTimeoutRef.current = null;
+      }
+      if (nextState !== 'collapsed') {
+        setIsPillHovered(false);
+        setAnchorOffsetX(0);
+      }
+      setDotState(nextState);
+      notifyElectronSize(nextState);
+    },
+    [notifyElectronSize]
+  );
+
+  const doCapture = useCallback(
+    async (mode: 'fullscreen' | 'selection') => {
+      const isRetaking = Boolean(retakeStepId);
+      const targetRetakeId = retakeStepId;
+
+      setIsPillHovered(false);
+      setAnchorOffsetX(0);
+
+      // In Electron environment, triggerCapture emits 'capture-completed' via IPC.
+      // App.tsx in studioWindow is the single authoritative mutator that adds/retakes the step,
+      // which automatically synchronizes to overlayWindow via syncActiveProject.
+      if (typeof window !== 'undefined' && window.electronAPI?.triggerCapture) {
+        try {
+          const imagePath = await window.electronAPI.triggerCapture(isRetaking, mode);
+          if (imagePath) {
+            setRecentCapture(imagePath);
+            return;
+          }
+        } catch (err) {
+          console.warn('Capture failed:', err);
+        }
+      }
+
+      // Standalone web browser fallback:
+      if (onTriggerCapture) {
+        const path = await onTriggerCapture();
+        if (path) {
+          if (isRetaking && targetRetakeId) {
+            retakeStepImage(targetRetakeId, path);
+            setRetakeStepId(null);
+            setActiveStepId(targetRetakeId);
+            setActiveView('studio');
+          } else {
+            addStep(path);
+          }
+          setRecentCapture(path);
+          return;
+        }
+      }
+
+      // Fallback: mock capture step
+      const mockStep = addStep(
+        `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" fill="%231e293b"><rect width="960" height="540" fill="%230f172a"/><text x="480" y="270" font-family="system-ui" font-size="28" fill="%23f8fafc" text-anchor="middle">Step ${stepCount + 1} Captured</text></svg>`
+      );
+      setRecentCapture(mockStep.image?.originalImagePath || null);
+    },
+    [
+      retakeStepId,
+      retakeStepImage,
+      setRetakeStepId,
+      setActiveStepId,
+      setActiveView,
+      addStep,
+      setRecentCapture,
+      onTriggerCapture,
+      stepCount,
+    ]
+  );
+
+  // Single data-driven configuration for expandable pill action buttons
+  const pillActionButtons = useMemo(() => {
+    const buttons = [
+      {
+        id: 'fullscreen',
+        icon: Camera,
+        shortcut: shortcutFullLabel,
+        onClick: (e: React.MouseEvent) => {
+          e.stopPropagation();
+          doCapture('fullscreen');
+        },
+        title:
+          isRetakeMode && retakeStep
+            ? `Retake full screen for Step ${retakeStep.order} (${cmdLabel}+Shift+S)`
+            : `Full screen capture (${cmdLabel}+Shift+S)`,
+        colorClasses: isRetakeMode
+          ? 'bg-amber-950/60 border-amber-500/50 hover:bg-amber-900/60 text-amber-300'
+          : 'bg-zinc-900/90 border-zinc-800 hover:border-blue-500/50 hover:bg-zinc-800 text-blue-400',
+      },
+      {
+        id: 'selection',
+        icon: Crop,
+        shortcut: shortcutAreaLabel,
+        onClick: (e: React.MouseEvent) => {
+          e.stopPropagation();
+          doCapture('selection');
+        },
+        title:
+          isRetakeMode && retakeStep
+            ? `Retake selected area for Step ${retakeStep.order} (${cmdLabel}+Shift+A)`
+            : `Capture selected area (${cmdLabel}+Shift+A)`,
+        colorClasses:
+          'bg-zinc-900/90 border-zinc-800 hover:border-amber-500/50 hover:bg-zinc-800 text-amber-400',
+      },
+    ];
+
+    if (RELEASE_FEATURES.errorFaq) {
+      buttons.push({
+        id: 'search',
+        icon: Search,
+        shortcut: shortcutSearchLabel,
+        onClick: (e: React.MouseEvent) => {
+          e.stopPropagation();
+          transitionToState('search');
+        },
+        title: `Quick Error Search HUD (${cmdLabel}+Shift+F)`,
+        colorClasses:
+          'bg-zinc-900/90 border-zinc-800 hover:border-purple-500/50 hover:bg-zinc-800 text-purple-400',
+      });
+    }
+
+    return buttons;
+  }, [
+    shortcutFullLabel,
+    shortcutAreaLabel,
+    shortcutSearchLabel,
+    isRetakeMode,
+    retakeStep,
+    cmdLabel,
+    doCapture,
+    transitionToState,
+  ]);
+
+  // Measure natural width of each shortcut badge so width animation & cursor-anchor math match to the pixel
+  useLayoutEffect(() => {
+    if (dotState !== 'collapsed') return;
+    const measured = pillActionButtons.map((_, idx) => {
+      const el = labelRefs.current[idx];
+      return el && el.scrollWidth > 0 ? Math.ceil(el.scrollWidth) : isMac ? 36 : 48;
+    });
+    setLabelWidths((prev) =>
+      prev.length === measured.length && prev.every((val, i) => val === measured[i]) ? prev : measured
+    );
+  }, [dotState, isMac, isRetakeMode, pillActionButtons]);
+
+  /**
+   * Computes the horizontal translation (in px) so that the pill expands outward
+   * directly from the button / cursor position where the user hovered, keeping
+   * the target button stationary under the cursor.
+   */
+  const computeAnchorOffset = useCallback(
+    (clientX: number, hoveredButtonIndex?: number): number => {
+      const expandableDeltas = pillActionButtons.map(
+        (_, idx) => (labelRefs.current[idx]?.scrollWidth || labelWidths[idx] || 38) + EXPAND_PADDING_DELTA_PX
+      );
+      const deltas = [...expandableDeltas, 0]; // Restore button does not change width
+      const totalDeltaW = expandableDeltas.reduce((sum, w) => sum + w, 0);
+
+      let targetIdx = hoveredButtonIndex;
+      if (targetIdx === undefined) {
+        let minDistance = Infinity;
+        buttonRefs.current.forEach((btn, idx) => {
+          if (!btn) return;
+          const rect = btn.getBoundingClientRect();
+          const center = rect.left + rect.width / 2;
+          const dist = Math.abs(clientX - center);
+          if (dist < minDistance) {
+            minDistance = dist;
+            targetIdx = idx;
+          }
+        });
+      }
+
+      if (targetIdx === undefined) return 0;
+
+      let expansionToLeft = 0;
+      for (let i = 0; i < targetIdx; i++) {
+        expansionToLeft += deltas[i] || 0;
+      }
+
+      const btnEl = buttonRefs.current[targetIdx];
+      let cursorFractionInButton = 0.5;
+      if (btnEl) {
+        const rect = btnEl.getBoundingClientRect();
+        if (rect.width > 0) {
+          cursorFractionInButton = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        }
+      }
+
+      const cursorShiftInsidePill = expansionToLeft + cursorFractionInButton * (deltas[targetIdx] || 0);
+      return Math.round(totalDeltaW / 2 - cursorShiftInsidePill);
+    },
+    [labelWidths, pillActionButtons]
+  );
+
+  const handleActionZoneEnter = (clientX: number, buttonIndex?: number) => {
+    if (hoverLeaveTimeoutRef.current) {
+      clearTimeout(hoverLeaveTimeoutRef.current);
+      hoverLeaveTimeoutRef.current = null;
+    }
+    if (!isPillHovered) {
+      const offset = computeAnchorOffset(clientX, buttonIndex);
+      setAnchorOffsetX(offset);
+      setIsPillHovered(true);
+    }
   };
+
+  const handleActionZoneLeave = () => {
+    if (hoverLeaveTimeoutRef.current) {
+      clearTimeout(hoverLeaveTimeoutRef.current);
+    }
+    hoverLeaveTimeoutRef.current = setTimeout(() => {
+      setIsPillHovered(false);
+      setAnchorOffsetX(0);
+    }, 90);
+  };
+
+  // Clean up timers on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+      if (hoverLeaveTimeoutRef.current) clearTimeout(hoverLeaveTimeoutRef.current);
+    };
+  }, []);
+
+  // Sync retakeStepId from IPC if changed externally
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.electronAPI?.onRetakeStepIdChanged) {
+      return window.electronAPI.onRetakeStepIdChanged((id) => {
+        setRetakeStepId(id);
+      });
+    }
+  }, [setRetakeStepId]);
+
+  // Listen to Global Search HUD shortcut (Ctrl+Shift+F)
+  useEffect(() => {
+    if (!RELEASE_FEATURES.errorFaq) return;
+    if (typeof window !== 'undefined' && window.electronAPI?.onOpenSearchHud) {
+      return window.electronAPI.onOpenSearchHud(() => {
+        transitionToState('search');
+      });
+    }
+  }, [transitionToState]);
 
   // Trigger mini preview when recentCapture changes
   useEffect(() => {
     if (recentCapture) {
-      triggerMiniPreview();
-    }
-  }, [recentCapture]);
+      if (timerRef.current) clearTimeout(timerRef.current);
+      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
 
-  const triggerMiniPreview = () => {
+      transitionToState('mini_preview');
+      setProgressWidth(100);
+
+      const startTime = Date.now();
+      const duration = 3000;
+
+      progressIntervalRef.current = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        const remaining = Math.max(0, 100 - (elapsed / duration) * 100);
+        setProgressWidth(remaining);
+      }, 50);
+
+      timerRef.current = setTimeout(() => {
+        if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+        transitionToState('collapsed');
+        setRecentCapture(null);
+      }, duration);
+    }
+  }, [recentCapture, setRecentCapture, transitionToState]);
+
+  const clearPreviewTimers = () => {
     if (timerRef.current) clearTimeout(timerRef.current);
     if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-
-    setDotState('mini_preview');
-    notifyElectronSize('mini_preview');
-    setProgressWidth(100);
-
-    const startTime = Date.now();
-    const duration = 3000;
-
-    progressIntervalRef.current = setInterval(() => {
-      const elapsed = Date.now() - startTime;
-      const remaining = Math.max(0, 100 - (elapsed / duration) * 100);
-      setProgressWidth(remaining);
-    }, 50);
-
-    // Auto-collapses silently after 3s
-    timerRef.current = setTimeout(() => {
-      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-      setDotState('collapsed');
-      notifyElectronSize('collapsed');
-      setRecentCapture(null);
-    }, duration);
   };
 
   const handleOpenStudioForStep = (e?: React.MouseEvent) => {
     e?.stopPropagation();
-    if (timerRef.current) clearTimeout(timerRef.current);
-    if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-
-    setDotState('collapsed');
-    notifyElectronSize('collapsed');
+    clearPreviewTimers();
+    transitionToState('collapsed');
     setRecentCapture(null);
 
-    // Ensure the latest step is set as activeStepId in store
     const currentProj = useSopStore.getState().activeProject;
     if (currentProj && currentProj.steps.length > 0) {
       const latestStep = currentProj.steps[currentProj.steps.length - 1];
       setActiveStepId(latestStep.id);
     }
 
-    if (typeof window !== 'undefined' && window.electronAPI?.restoreStudio) {
-      window.electronAPI.restoreStudio();
-    }
+    window.electronAPI?.restoreStudio?.();
     setActiveView('studio');
   };
 
   const handleDismissPreview = (e?: React.MouseEvent) => {
     e?.stopPropagation();
-    if (timerRef.current) clearTimeout(timerRef.current);
-    if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-
-    setDotState('collapsed');
-    notifyElectronSize('collapsed');
+    clearPreviewTimers();
+    transitionToState('collapsed');
     setRecentCapture(null);
-  };
-
-  const handleSnapFullScreen = async (e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    await doCapture('fullscreen');
-  };
-
-  const handleSnapSelection = async (e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    await doCapture('selection');
-  };
-
-  const doCapture = async (mode: 'fullscreen' | 'selection') => {
-    const isRetaking = Boolean(retakeStepId);
-    const targetRetakeId = retakeStepId;
-
-    if (typeof window !== 'undefined' && window.electronAPI?.triggerCapture) {
-      try {
-        const imagePath = await window.electronAPI.triggerCapture(isRetaking, mode);
-        if (imagePath) {
-          if (isRetaking && targetRetakeId) {
-            retakeStepImage(targetRetakeId, imagePath);
-            setRetakeStepId(null);
-            setActiveStepId(targetRetakeId);
-            if (typeof window !== 'undefined' && window.electronAPI?.restoreStudio) {
-              window.electronAPI.restoreStudio();
-            }
-            setActiveView('studio');
-            return;
-          }
-
-          setRecentCapture(imagePath);
-          return;
-        }
-      } catch (err) {
-        console.warn('Capture failed:', err);
-      }
-    }
-
-    if (onTriggerCapture) {
-      const path = await onTriggerCapture();
-      if (path) {
-        if (isRetaking && targetRetakeId) {
-          retakeStepImage(targetRetakeId, path);
-          setRetakeStepId(null);
-          setActiveStepId(targetRetakeId);
-          if (typeof window !== 'undefined' && window.electronAPI?.restoreStudio) {
-            window.electronAPI.restoreStudio();
-          }
-          setActiveView('studio');
-          return;
-        }
-
-        addStep(path);
-        setRecentCapture(path);
-        return;
-      }
-    }
-
-    // Fallback: mock capture step
-    const mockStep = addStep(
-      `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" fill="%231e293b"><rect width="960" height="540" fill="%230f172a"/><text x="480" y="270" font-family="system-ui" font-size="28" fill="%23f8fafc" text-anchor="middle">Step ${stepCount + 1} Captured</text></svg>`
-    );
-    setRecentCapture(mockStep.image?.originalImagePath || null);
   };
 
   // =========================================================
@@ -250,18 +412,21 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
   // =========================================================
 
   const handleDragOver = (e: React.DragEvent) => {
+    if (!RELEASE_FEATURES.errorFaq) return;
     e.preventDefault();
     e.stopPropagation();
     setIsDragOver(true);
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
+    if (!RELEASE_FEATURES.errorFaq) return;
     e.preventDefault();
     e.stopPropagation();
     setIsDragOver(false);
   };
 
   const handleDrop = async (e: React.DragEvent) => {
+    if (!RELEASE_FEATURES.errorFaq) return;
     e.preventDefault();
     e.stopPropagation();
     setIsDragOver(false);
@@ -291,6 +456,7 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
 
   // Listen for Clipboard Paste (Ctrl+V / Cmd+V)
   useEffect(() => {
+    if (!RELEASE_FEATURES.errorFaq) return;
     const handlePaste = async (e: ClipboardEvent) => {
       const target = e.target as HTMLElement;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
@@ -321,39 +487,56 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
     return () => window.removeEventListener('paste', handlePaste);
   }, []);
 
-  const handleProcessErrorImage = async (imagePathOrBase64: string) => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+  const openBlankNewErrorCard = useCallback(
+    (title = 'Unspecified Error', code = '') => {
+      setNewErrorTitle(title);
+      setNewErrorCode(code);
+      setNewErrorSolution('');
+      setNewErrorTags('');
+      transitionToState('error_new');
+    },
+    [transitionToState]
+  );
 
-    setDotState('ocr_scanning');
-    notifyElectronSize('ocr_scanning');
+  const handleProcessErrorImage = async (imagePathOrBase64: string) => {
+    if (!RELEASE_FEATURES.errorFaq) return;
+    clearPreviewTimers();
+    transitionToState('ocr_scanning');
     setIsCopied(false);
+
+    const scanningSafetyTimer = setTimeout(() => {
+      setDotState((current) => {
+        if (current === 'ocr_scanning') {
+          notifyElectronSize('error_new');
+          setNewErrorTitle('Unspecified Error');
+          setNewErrorCode('');
+          setNewErrorSolution('');
+          setNewErrorTags('');
+          return 'error_new';
+        }
+        return current;
+      });
+    }, 12000);
 
     try {
       const result = await analyzeImageWithOcr(imagePathOrBase64);
+      clearTimeout(scanningSafetyTimer);
       if (!result) {
-        setDotState('collapsed');
-        notifyElectronSize('collapsed');
+        openBlankNewErrorCard();
         return;
       }
 
       setOcrResult(result);
 
       if (result.bestMatch && result.bestMatch.confidence >= 0.45) {
-        setDotState('error_match');
-        notifyElectronSize('error_match');
+        transitionToState('error_match');
       } else {
-        setNewErrorTitle(result.detectedTitle || 'Unspecified Error');
-        setNewErrorCode(result.detectedErrorCode || '');
-        setNewErrorSolution('');
-        setNewErrorTags('');
-        setDotState('error_new');
-        notifyElectronSize('error_new');
+        openBlankNewErrorCard(result.detectedTitle || 'Unspecified Error', result.detectedErrorCode || '');
       }
     } catch (err) {
+      clearTimeout(scanningSafetyTimer);
       console.error('OCR processing failed:', err);
-      setDotState('collapsed');
-      notifyElectronSize('collapsed');
+      openBlankNewErrorCard();
     }
   };
 
@@ -396,8 +579,7 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
       if (newErrorSolution.trim()) {
         navigator.clipboard.writeText(newErrorSolution.trim());
       }
-      setDotState('collapsed');
-      notifyElectronSize('collapsed');
+      transitionToState('collapsed');
       setOcrResult(null);
     } else {
       alert('Failed to save error solution.');
@@ -407,11 +589,11 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
   const handleRestoreStudio = (e?: React.MouseEvent) => {
     e?.stopPropagation();
     setRetakeStepId(null);
-    if (typeof window !== 'undefined' && window.electronAPI?.restoreStudio) {
-      window.electronAPI.restoreStudio();
-    }
+    window.electronAPI?.restoreStudio?.();
     setActiveView('studio');
   };
+
+  const isAmberDot = isRetakeMode || (!activeProject && RELEASE_FEATURES.errorFaq);
 
   return (
     <div
@@ -420,18 +602,20 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {/* 1. COLLAPSED STATE: Glowing Capsule HUD with Drag-and-Drop Dropzone & Shortcuts */}
+      {/* 1. COLLAPSED STATE: Cursor-Anchored Dynamic Capsule HUD */}
       {dotState === 'collapsed' && (
         <div
           onDoubleClick={handleRestoreStudio}
-          className={`titlebar-drag group flex items-center gap-1.5 px-3 py-1.5 bg-zinc-950/95 text-white rounded-full transition-all cursor-grab active:cursor-grabbing ${
+          style={{
+            transform: `translate3d(${isPillHovered && !isDragOver ? anchorOffsetX : 0}px, 0, 0)`,
+          }}
+          className={`pill-expand-transition flex items-center h-10 bg-zinc-950/95 text-white rounded-full transition-[transform,box-shadow,border-color] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform ${
             isDragOver
-              ? 'border-2 border-dashed border-emerald-400 bg-emerald-950/80 shadow-[0_0_24px_rgba(52,211,153,0.8),0_0_8px_#34d399] scale-105'
+              ? 'px-3 border-2 border-dashed border-emerald-400 bg-emerald-950/80 shadow-[0_0_24px_rgba(52,211,153,0.8),0_0_8px_#34d399] scale-105'
               : isRetakeMode
-              ? 'border border-amber-500/80 shadow-[0_0_14px_rgba(245,158,11,0.7),0_0_24px_rgba(245,158,11,0.35),0_0_3px_#f59e0b] hover:shadow-[0_0_18px_rgba(245,158,11,0.85),0_0_30px_rgba(245,158,11,0.5),0_0_5px_#f59e0b]'
-              : 'border border-blue-500/80 shadow-[0_0_14px_rgba(59,130,246,0.7),0_0_24px_rgba(59,130,246,0.35),0_0_3px_#3b82f6] hover:shadow-[0_0_18px_rgba(59,130,246,0.85),0_0_30px_rgba(59,130,246,0.5),0_0_5px_#3b82f6]'
+              ? 'border border-amber-500/80 shadow-[0_0_14px_rgba(245,158,11,0.7),0_0_24px_rgba(245,158,11,0.35),0_0_3px_#f59e0b]'
+              : 'border border-blue-500/80 shadow-[0_0_14px_rgba(59,130,246,0.7),0_0_24px_rgba(59,130,246,0.35),0_0_3px_#3b82f6]'
           }`}
-          title="Drag to reposition • Drop error screenshot • Double-click or click [↗] to open Studio"
         >
           {isDragOver ? (
             <div className="flex items-center gap-2 py-0.5 px-1 text-emerald-300 font-semibold text-xs animate-pulse">
@@ -440,105 +624,108 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
             </div>
           ) : (
             <>
-              {/* Glowing Pulse Indicator & Step Count / Retake Badge */}
+              {/* Dedicated Drag Handle: Status Indicator & Step Count / Standby Badge */}
               <div
-                className="titlebar-no-drag flex items-center gap-1.5 px-0.5 cursor-pointer"
-                onClick={handleRestoreStudio}
+                className="titlebar-drag flex items-center gap-1.5 pl-3 pr-2 h-full cursor-grab active:cursor-grabbing shrink-0"
                 title={
                   isRetakeMode && retakeStep
-                    ? `Retaking Step ${retakeStep.order} • Click to cancel & return to Studio`
-                    : 'Step count • Click to open Studio'
+                    ? `Retaking Step ${retakeStep.order} • Drag to reposition`
+                    : activeProject
+                    ? `Step ${stepCount} • Drag to reposition • Double-click to open Studio`
+                    : RELEASE_FEATURES.errorFaq
+                    ? 'Error & FAQ Standby • Drag to reposition • Drop screenshot to scan'
+                    : 'SOP Capture Standby • Drag to reposition • Double-click to open Studio'
                 }
               >
-                <span className="relative flex h-2.5 w-2.5">
+                <span className="relative flex h-2.5 w-2.5 shrink-0">
                   <span
                     className={`absolute inline-flex h-full w-full rounded-full opacity-35 ${
-                      isRetakeMode ? 'bg-amber-400' : 'bg-blue-400'
+                      isAmberDot ? 'bg-amber-400' : 'bg-blue-400'
                     }`}
                   />
                   <span
                     className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
-                      isRetakeMode
+                      isAmberDot
                         ? 'bg-amber-500 shadow-[0_0_6px_#f59e0b]'
                         : 'bg-blue-500 shadow-[0_0_6px_#3b82f6]'
                     }`}
                   />
                 </span>
                 <span
-                  className={`font-mono text-xs font-bold tracking-tight ${
-                    isRetakeMode ? 'text-amber-300' : 'text-white'
+                  className={`font-mono text-xs font-bold tracking-tight whitespace-nowrap ${
+                    isAmberDot ? 'text-amber-300' : 'text-white'
                   }`}
                 >
-                  {isRetakeMode && retakeStep ? `Retake #${retakeStep.order}` : stepCount}
+                  {isRetakeMode && retakeStep
+                    ? `Retake #${retakeStep.order}`
+                    : activeProject
+                    ? stepCount
+                    : RELEASE_FEATURES.errorFaq
+                    ? 'FAQ'
+                    : 'SOP'}
                 </span>
+                <div className="h-3.5 w-px bg-zinc-700/80 ml-1" />
               </div>
 
-              <div className="h-3.5 w-px bg-zinc-700/80 mx-0.5" />
+              {/* Contiguous No-Drag Action Zone: Zero drag-region gaps to prevent Electron hover flicker */}
+              <div
+                onPointerEnter={(e) => handleActionZoneEnter(e.clientX)}
+                onPointerLeave={handleActionZoneLeave}
+                className="titlebar-no-drag flex items-center gap-1 pr-2 pl-0.5 h-full shrink-0"
+              >
+                {pillActionButtons.map((action, idx) => {
+                  const Icon = action.icon;
+                  const targetLabelWidth = labelWidths[idx] || (isMac ? 36 : 48);
+                  return (
+                    <button
+                      key={action.id}
+                      ref={(el) => {
+                        buttonRefs.current[idx] = el;
+                      }}
+                      type="button"
+                      onPointerEnter={(e) => handleActionZoneEnter(e.clientX, idx)}
+                      onClick={action.onClick}
+                      className={`pill-expand-transition flex items-center justify-center h-7 rounded-full border text-xs font-medium cursor-pointer shrink-0 transition-[padding,background-color,border-color,color] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                        isPillHovered ? 'px-2.5' : 'px-1.5'
+                      } ${action.colorClasses}`}
+                      title={action.title}
+                    >
+                      <Icon className="w-3.5 h-3.5 shrink-0" />
+                      <span
+                        ref={(el) => {
+                          labelRefs.current[idx] = el;
+                        }}
+                        style={{
+                          width: isPillHovered ? `${targetLabelWidth}px` : '0px',
+                        }}
+                        className={`pill-expand-transition inline-block overflow-hidden whitespace-nowrap font-mono text-[10px] font-semibold tracking-tight text-zinc-200 transition-[width,opacity] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                          isPillHovered ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                        }`}
+                      >
+                        <span className="pl-1.5 inline-block">{action.shortcut}</span>
+                      </span>
+                    </button>
+                  );
+                })}
 
-              {/* Quick Action Buttons with Visible Shortcut Keycaps */}
-              <div className="titlebar-no-drag flex items-center gap-1.5">
-                {/* Full screen capture */}
+                {/* Restore Studio / Library Button */}
                 <button
-                  type="button"
-                  onClick={handleSnapFullScreen}
-                  className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium transition-all cursor-pointer ${
-                    isRetakeMode
-                      ? 'bg-amber-950/60 border border-amber-500/50 hover:bg-amber-900/60 text-amber-300'
-                      : 'bg-zinc-900/90 border border-zinc-800 hover:border-blue-500/50 hover:bg-zinc-800 text-blue-400'
-                  }`}
-                  title={
-                    isRetakeMode && retakeStep
-                      ? `Retake full screen for Step ${retakeStep.order} (${cmdLabel}+Shift+S)`
-                      : `Full screen capture (${cmdLabel}+Shift+S)`
-                  }
-                >
-                  <Camera className="w-3.5 h-3.5 shrink-0" />
-                  <span className="font-mono text-[10px] font-semibold text-zinc-300 tracking-tight">
-                    <span className="text-zinc-500 font-sans">{cmdLabel}+</span>Shift+S
-                  </span>
-                </button>
-
-                {/* Selection / Region capture */}
-                <button
-                  type="button"
-                  onClick={handleSnapSelection}
-                  className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-zinc-900/90 border border-zinc-800 hover:border-amber-500/50 hover:bg-zinc-800 text-amber-400 transition-all cursor-pointer text-xs font-medium"
-                  title={
-                    isRetakeMode && retakeStep
-                      ? `Retake selected area for Step ${retakeStep.order} (${cmdLabel}+Shift+A)`
-                      : `Capture selected area (${cmdLabel}+Shift+A)`
-                  }
-                >
-                  <Crop className="w-3.5 h-3.5 shrink-0" />
-                  <span className="font-mono text-[10px] font-semibold text-zinc-300 tracking-tight">
-                    <span className="text-zinc-500 font-sans">{cmdLabel}+</span>Shift+A
-                  </span>
-                </button>
-
-                {/* Error FAQ Spotlight Search Button */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDotState('search');
-                    notifyElectronSize('search');
+                  ref={(el) => {
+                    buttonRefs.current[pillActionButtons.length] = el;
                   }}
-                  className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-zinc-900/90 border border-zinc-800 hover:border-purple-500/50 hover:bg-zinc-800 text-purple-400 transition-all cursor-pointer text-xs font-medium"
-                  title={`Quick Error Search HUD (${cmdLabel}+Shift+F)`}
-                >
-                  <Search className="w-3.5 h-3.5 shrink-0" />
-                  <span className="font-mono text-[10px] font-semibold text-zinc-300 tracking-tight">
-                    <span className="text-zinc-500 font-sans">{cmdLabel}+</span>Shift+F
-                  </span>
-                </button>
-
-                {/* Expand to Studio */}
-                <button
                   type="button"
+                  onPointerEnter={(e) => handleActionZoneEnter(e.clientX, pillActionButtons.length)}
                   onClick={handleRestoreStudio}
-                  className="p-1 rounded-full hover:bg-zinc-800 active:bg-zinc-700 text-zinc-400 hover:text-white transition-colors cursor-pointer ml-0.5"
-                  title={isRetakeMode ? 'Cancel retake & return to Studio' : 'Expand & Open Studio'}
+                  className="flex items-center justify-center w-7 h-7 rounded-full hover:bg-zinc-800 active:bg-zinc-700 text-zinc-400 hover:text-white transition-colors cursor-pointer shrink-0"
+                  title={
+                    isRetakeMode
+                      ? 'Cancel retake & return to Studio'
+                      : activeProject
+                      ? 'Expand & Open Studio'
+                      : 'Restore StepFlow'
+                  }
                 >
-                  <Maximize2 className="w-3.5 h-3.5" />
+                  <Maximize2 className="w-3.5 h-3.5 shrink-0" />
                 </button>
               </div>
             </>
@@ -605,7 +792,7 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
       )}
 
       {/* 3. OCR SCANNING ANIMATION STATE */}
-      {dotState === 'ocr_scanning' && (
+      {RELEASE_FEATURES.errorFaq && dotState === 'ocr_scanning' && (
         <div className="titlebar-no-drag bg-zinc-950/95 text-white rounded-2xl p-4 border border-blue-500/80 shadow-[0_0_24px_rgba(59,130,246,0.7),0_0_8px_#3b82f6] w-[340px] flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -619,10 +806,7 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
             </div>
             <button
               type="button"
-              onClick={() => {
-                setDotState('collapsed');
-                notifyElectronSize('collapsed');
-              }}
+              onClick={() => transitionToState('collapsed')}
               className="p-1 rounded-full text-zinc-400 hover:text-white hover:bg-zinc-800 cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
@@ -639,7 +823,7 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
       )}
 
       {/* 4. VERIFIED SOLUTION MATCH CARD */}
-      {dotState === 'error_match' && ocrResult?.bestMatch && (
+      {RELEASE_FEATURES.errorFaq && dotState === 'error_match' && ocrResult?.bestMatch && (
         <div className="titlebar-no-drag bg-zinc-950/95 text-white rounded-2xl p-3.5 border border-emerald-500/80 shadow-[0_0_26px_rgba(16,185,129,0.65),0_0_8px_#10b981] w-[360px] flex flex-col gap-2.5">
           {/* Header */}
           <div className="flex items-center justify-between">
@@ -651,10 +835,7 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
             </div>
             <button
               type="button"
-              onClick={() => {
-                setDotState('collapsed');
-                notifyElectronSize('collapsed');
-              }}
+              onClick={() => transitionToState('collapsed')}
               className="p-1 rounded text-zinc-400 hover:text-white hover:bg-zinc-800 cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
@@ -707,13 +888,12 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
           <div className="flex items-center justify-between text-[11px] pt-1 text-zinc-400 border-t border-zinc-800/80">
             <button
               type="button"
-              onClick={() => {
-                setNewErrorTitle(ocrResult.detectedTitle || 'New Error');
-                setNewErrorCode(ocrResult.detectedErrorCode || '');
-                setNewErrorSolution('');
-                setDotState('error_new');
-                notifyElectronSize('error_new');
-              }}
+              onClick={() =>
+                openBlankNewErrorCard(
+                  ocrResult.detectedTitle || 'New Error',
+                  ocrResult.detectedErrorCode || ''
+                )
+              }
               className="text-zinc-400 hover:text-white transition-colors cursor-pointer"
             >
               Not this error? Add New
@@ -722,8 +902,7 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
             <button
               type="button"
               onClick={() => {
-                setDotState('collapsed');
-                notifyElectronSize('collapsed');
+                transitionToState('collapsed');
                 handleRestoreStudio();
               }}
               className="text-blue-400 hover:text-blue-300 transition-colors cursor-pointer flex items-center gap-1"
@@ -736,7 +915,7 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
       )}
 
       {/* 5. NEW ERROR RECORDING CARD */}
-      {dotState === 'error_new' && (
+      {RELEASE_FEATURES.errorFaq && dotState === 'error_new' && (
         <div className="titlebar-no-drag bg-zinc-950/95 text-white rounded-2xl p-4 border border-blue-500/80 shadow-[0_0_26px_rgba(59,130,246,0.65),0_0_8px_#3b82f6] w-[380px] flex flex-col gap-3">
           {/* Header */}
           <div className="flex items-center justify-between">
@@ -746,10 +925,7 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
             </div>
             <button
               type="button"
-              onClick={() => {
-                setDotState('collapsed');
-                notifyElectronSize('collapsed');
-              }}
+              onClick={() => transitionToState('collapsed')}
               className="p-1 rounded text-zinc-400 hover:text-white hover:bg-zinc-800 cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
@@ -817,10 +993,7 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
           <div className="flex items-center justify-between pt-1">
             <button
               type="button"
-              onClick={() => {
-                setDotState('collapsed');
-                notifyElectronSize('collapsed');
-              }}
+              onClick={() => transitionToState('collapsed')}
               className="text-xs text-zinc-400 hover:text-white cursor-pointer"
             >
               Cancel
@@ -840,21 +1013,11 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
       )}
 
       {/* 6. SEARCH SPOTLIGHT HUD OVERLAY */}
-      {dotState === 'search' && (
+      {RELEASE_FEATURES.errorFaq && dotState === 'search' && (
         <ErrorSearchModal
           isOpen={true}
-          onClose={() => {
-            setDotState('collapsed');
-            notifyElectronSize('collapsed');
-          }}
-          onAddNew={() => {
-            setNewErrorTitle('');
-            setNewErrorCode('');
-            setNewErrorSolution('');
-            setNewErrorTags('');
-            setDotState('error_new');
-            notifyElectronSize('error_new');
-          }}
+          onClose={() => transitionToState('collapsed')}
+          onAddNew={() => openBlankNewErrorCard('', '')}
         />
       )}
     </div>

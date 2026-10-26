@@ -10,19 +10,23 @@ import {
   RotateCcw,
   X,
   BookOpen,
-  ListOrdered
+  ListOrdered,
+  PanelLeft
 } from 'lucide-react';
 import { useSopStore, isDefaultStepTitle } from '../../store/useSopStore';
 import { SopStep, DEFAULT_COVER_PAGE_SETTINGS } from '../../types/sop';
+import { getCmdLabel } from '../../utils/platform';
 
 interface StepOutlineProps {
   onCaptureScreenshot?: () => void;
   width?: number;
+  onToggleCollapse?: () => void;
 }
 
 export const StepOutline: React.FC<StepOutlineProps> = ({
   onCaptureScreenshot,
-  width = 256
+  width = 256,
+  onToggleCollapse
 }) => {
   const {
     activeProject,
@@ -188,17 +192,29 @@ export const StepOutline: React.FC<StepOutlineProps> = ({
     }, 150);
   };
 
+  const cmdLabel = getCmdLabel();
+
   return (
     <aside
       style={{ width }}
       className="border-r border-zinc-200/80 dark:border-zinc-800/80 bg-zinc-50/50 dark:bg-zinc-900/50 flex flex-col h-full select-none shrink-0 overflow-hidden"
     >
       {/* Sidebar Header */}
-      <div className="h-10 px-3.5 border-b border-zinc-200/80 dark:border-zinc-800/80 flex items-center shrink-0">
+      <div className="h-10 px-3.5 border-b border-zinc-200/80 dark:border-zinc-800/80 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider uppercase">
           <Layers className="w-3.5 h-3.5" />
           <span>Step Outline</span>
         </div>
+        {onToggleCollapse && (
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="p-1 rounded-md hover:bg-zinc-200/60 dark:hover:bg-zinc-800 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors cursor-pointer"
+            title={`Collapse Step Outline (${cmdLabel}+B)`}
+          >
+            <PanelLeft className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
 
       {/* Step Cards List */}

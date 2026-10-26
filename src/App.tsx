@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useSopStore } from './store/useSopStore';
+import { useSopStore, normalizeProjectSteps } from './store/useSopStore';
 import { ProjectLibrary } from './components/dashboard/ProjectLibrary';
 import { StudioLayout } from './components/studio/StudioLayout';
 import { FloatingDot } from './components/overlay/FloatingDot';
@@ -105,21 +105,22 @@ export const App: React.FC = () => {
         unsubscribeFileChanged = window.electronAPI.onProjectFileChanged((data) => {
           const store = useSopStore.getState();
           if (data.action === 'save' && data.project) {
+            const normalizedProject = normalizeProjectSteps(data.project);
             const updated = store.projects.some((p) => p.id === data.id)
-              ? store.projects.map((p) => (p.id === data.id ? data.project! : p))
-              : [data.project, ...store.projects];
+              ? store.projects.map((p) => (p.id === data.id ? normalizedProject : p))
+              : [normalizedProject, ...store.projects];
 
             useSopStore.setState({ projects: updated });
 
             // If the changed project is currently open in Studio, live-update it
             if (store.activeProject?.id === data.id) {
               const currentStepId = store.activeStepId;
-              const stepStillExists = data.project.steps.some((s) => s.id === currentStepId);
+              const stepStillExists = normalizedProject.steps.some((s) => s.id === currentStepId);
               useSopStore.setState({
-                activeProject: data.project,
+                activeProject: normalizedProject,
                 activeStepId: stepStillExists
                   ? currentStepId
-                  : data.project.steps[0]?.id || null,
+                  : normalizedProject.steps[0]?.id || null,
               });
             }
           } else if (data.action === 'delete') {

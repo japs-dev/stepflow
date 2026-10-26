@@ -11,6 +11,7 @@ import {
   PenLine,
 } from 'lucide-react';
 import { renderMarkdownBlocks } from '../../utils/markdownHelper';
+import { getCmdLabel } from '../../utils/platform';
 
 export interface RichInstructionsEditorProps {
   value: string;
@@ -34,10 +35,7 @@ export const RichInstructionsEditor: React.FC<RichInstructionsEditorProps> = ({
   const [activeTab, setActiveTab] = useState<'write' | 'preview'>('write');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  const isMac =
-    typeof window !== 'undefined' &&
-    /Mac|iPhone|iPad|iPod/.test(window.navigator.platform || window.navigator.userAgent);
-  const cmdKey = isMac ? 'Cmd' : 'Ctrl';
+  const cmdKey = getCmdLabel();
 
   /**
    * Surrounds selected text with prefix and suffix (e.g. **bold**)

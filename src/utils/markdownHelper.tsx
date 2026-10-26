@@ -1,23 +1,25 @@
 import React from 'react';
 
 /**
- * Strips markdown syntax to return clean, single-line text for summaries, TOC, and search.
+ * Strips markdown syntax to return clean text for summaries, TOC, search, and plain-text exporters.
+ * Pass `{ preserveNewlines: true }` when rendering multi-line plain text (e.g., PDF/PPTX step descriptions).
  */
-export function stripMarkdown(content?: string): string {
+export function stripMarkdown(content?: string, options?: { preserveNewlines?: boolean }): string {
   if (!content) return '';
-  return content
+  const cleaned = content
     .replace(/^###\s+/gm, '')
     .replace(/^##\s+/gm, '')
     .replace(/^#\s+/gm, '')
-    .replace(/^>\s+/gm, '')
+    .replace(/^-\s\[x\]\s*/gim, '• [x] ')
+    .replace(/^-\s\[\s\]\s*/gim, '• [ ] ')
     .replace(/^[-*]\s+/gm, '• ')
-    .replace(/^\d+\.\s+/gm, '')
+    .replace(/^\d+\.\s+/gm, (m) => (options?.preserveNewlines ? m : ''))
+    .replace(/^>\s+/gm, options?.preserveNewlines ? '  ' : '')
     .replace(/\*\*(.*?)\*\*/g, '$1')
     .replace(/\*(.*?)\*/g, '$1')
     .replace(/`([^`]+)`/g, '$1')
-    .replace(/\[(.*?)\]\(.*?\)/g, '$1')
-    .replace(/\n+/g, ' ')
-    .trim();
+    .replace(/\[(.*?)\]\(.*?\)/g, '$1');
+  return options?.preserveNewlines ? cleaned.trim() : cleaned.replace(/\n+/g, ' ').trim();
 }
 
 /**

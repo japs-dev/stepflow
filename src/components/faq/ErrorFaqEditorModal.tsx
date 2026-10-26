@@ -7,7 +7,7 @@ import {
   Trash2,
   Image as ImageIcon
 } from 'lucide-react';
-import { useSopStore } from '../../store/useSopStore';
+import { useSopStore, normalizeImagePathForRenderer } from '../../store/useSopStore';
 import { ErrorFaqItem } from '../../types/sop';
 import { RichInstructionsEditor } from '../studio/RichInstructionsEditor';
 
@@ -106,12 +106,6 @@ export const ErrorFaqEditorModal: React.FC<ErrorFaqEditorModalProps> = ({
     } finally {
       setIsSaving(false);
     }
-  };
-
-  const formatAssetUrl = (path?: string) => {
-    if (!path) return '';
-    if (path.startsWith('data:') || path.startsWith('http')) return path;
-    return `stepflow-asset://${encodeURIComponent(path)}`;
   };
 
   return (
@@ -214,7 +208,7 @@ export const ErrorFaqEditorModal: React.FC<ErrorFaqEditorModalProps> = ({
               </label>
               <div className="rounded-lg overflow-hidden border border-zinc-700 bg-zinc-950 p-1 max-h-32 flex items-center justify-center">
                 <img
-                  src={formatAssetUrl(imagePath)}
+                  src={normalizeImagePathForRenderer(imagePath) || ''}
                   alt="Error screenshot reference"
                   className="max-h-28 object-contain rounded"
                 />

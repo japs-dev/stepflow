@@ -8,18 +8,29 @@ import {
   Trash2,
   AlertTriangle,
 } from 'lucide-react';
-import { useSopStore } from '../../store/useSopStore';
+import { useSopStore, normalizeImagePathForRenderer } from '../../store/useSopStore';
 import { ErrorFaqItem } from '../../types/sop';
+import { stripMarkdown } from '../../utils/markdownHelper';
 import { ErrorFaqEditorModal } from './ErrorFaqEditorModal';
 
 interface ErrorKnowledgeBaseViewProps {
-  onOpenSearchHud: () => void;
+  onOpenSearchHud?: () => void;
+  searchQuery?: string;
+  onAddNew?: () => void;
+  onEditItem?: (item: ErrorFaqItem) => void;
 }
 
-export const ErrorKnowledgeBaseView: React.FC<ErrorKnowledgeBaseViewProps> = ({ onOpenSearchHud }) => {
+export const ErrorKnowledgeBaseView: React.FC<ErrorKnowledgeBaseViewProps> = ({
+  onOpenSearchHud,
+  searchQuery: externalSearchQuery,
+  onAddNew,
+  onEditItem,
+}) => {
   const { errorFaqItems, loadErrorFaq, deleteErrorFaqItem } = useSopStore();
 
-  const [searchQuery, setSearchQuery] = useState('');
+  const [localSearchQuery, setLocalSearchQuery] = useState('');
+  const searchQuery = externalSearchQuery !== undefined ? externalSearchQuery : localSearchQuery;
+  const setSearchQuery = setLocalSearchQuery;
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [editorItem, setEditorItem] = useState<ErrorFaqItem | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -71,12 +82,6 @@ export const ErrorKnowledgeBaseView: React.FC<ErrorKnowledgeBaseViewProps> = ({ 
     }
   };
 
-  const formatAssetUrl = (path?: string) => {
-    if (!path) return '';
-    if (path.startsWith('data:') || path.startsWith('http')) return path;
-    return `stepflow-asset://${encodeURIComponent(path)}`;
-  };
-
   return (
     <div className="flex-1 flex flex-col w-full max-w-6xl mx-auto p-6 md:p-8 animate-fadeIn">
       {/* Top Search & Filter Bar */}
@@ -109,8 +114,12 @@ export const ErrorKnowledgeBaseView: React.FC<ErrorKnowledgeBaseViewProps> = ({ 
           <button
             type="button"
             onClick={() => {
-              setEditorItem(null);
-              setIsEditorOpen(true);
+              if (onAddNew) {
+                onAddNew();
+              } else {
+                setEditorItem(null);
+                setIsEditorOpen(true);
+              }
             }}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-all cursor-pointer"
           >
@@ -180,8 +189,12 @@ export const ErrorKnowledgeBaseView: React.FC<ErrorKnowledgeBaseViewProps> = ({ 
             <button
               type="button"
               onClick={() => {
-                setEditorItem(null);
-                setIsEditorOpen(true);
+                if (onAddNew) {
+                  onAddNew();
+                } else {
+                  setEditorItem(null);
+                  setIsEditorOpen(true);
+                }
               }}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors cursor-pointer"
             >
@@ -214,7 +227,7 @@ export const ErrorKnowledgeBaseView: React.FC<ErrorKnowledgeBaseViewProps> = ({ 
                 {item.imagePath && (
                   <div className="h-24 rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-zinc-950 flex items-center justify-center">
                     <img
-                      src={formatAssetUrl(item.imagePath)}
+                      src={normalizeImagePathForRenderer(item.imagePath) || ''}
                       alt={item.title}
                       className="max-h-24 w-full object-contain"
                     />
@@ -223,7 +236,7 @@ export const ErrorKnowledgeBaseView: React.FC<ErrorKnowledgeBaseViewProps> = ({ 
 
                 {/* Solution preview snippet */}
                 <p className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-3 leading-relaxed">
-                  {item.solution.replace(/[*#_`]/g, '')}
+                  {stripMarkdown(item.solution)}
                 </p>
 
                 {/* Tags */}
@@ -270,8 +283,12 @@ export const ErrorKnowledgeBaseView: React.FC<ErrorKnowledgeBaseViewProps> = ({ 
                   <button
                     type="button"
                     onClick={() => {
-                      setEditorItem(item);
-                      setIsEditorOpen(true);
+                      if (onEditItem) {
+                        onEditItem(item);
+                      } else {
+                        setEditorItem(item);
+                        setIsEditorOpen(true);
+                      }
                     }}
                     className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
                     title="Edit solution"

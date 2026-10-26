@@ -88,10 +88,6 @@ export const KonvaCanvas = forwardRef<KonvaCanvasHandle, KonvaCanvasProps>(
       height: 540
     });
 
-    // Undo / Redo History Stack
-    const [history, setHistory] = useState<AnnotationItem[][]>([annotations]);
-    const [historyIndex, setHistoryIndex] = useState<number>(0);
-
     // Drawing state for drag-to-create tools (rect, arrow, blur)
     const [drawing, setDrawing] = useState<DrawingState>({
       isDrawing: false,
@@ -140,30 +136,12 @@ export const KonvaCanvas = forwardRef<KonvaCanvasHandle, KonvaCanvasProps>(
       };
     }, [imageSrc]);
 
-    // Synchronize history when annotations change externally (e.g. step changed)
-    useEffect(() => {
-      if (
-        annotations !== history[historyIndex] &&
-        JSON.stringify(annotations) !== JSON.stringify(history[historyIndex])
-      ) {
-        setHistory([annotations]);
-        setHistoryIndex(0);
-      }
-    }, [annotations]);
-
-    // Push state to history stack and commit to parent
+    // Commit annotations directly to parent controller (CenterViewport manages undo/redo stack)
     const commitAnnotations = useCallback(
       (newAnnotations: AnnotationItem[]) => {
-        const nextHistory = history.slice(0, historyIndex + 1);
-        nextHistory.push(newAnnotations);
-        if (nextHistory.length > 50) {
-          nextHistory.shift();
-        }
-        setHistory(nextHistory);
-        setHistoryIndex(nextHistory.length - 1);
         onChangeAnnotations(newAnnotations);
       },
-      [history, historyIndex, onChangeAnnotations]
+      [onChangeAnnotations]
     );
 
     // Expose export and stage methods via ref
@@ -613,12 +591,24 @@ export const KonvaCanvas = forwardRef<KonvaCanvasHandle, KonvaCanvasProps>(
       setImageDimensions({ width: offscreenCanvas.width, height: offscreenCanvas.height });
       setCropSelection(null);
 
-      if (onImageCropped) {
-        onImageCropped(croppedDataUrl, adjustedAnnotations);
-      }
-      if (onToolUsed) {
-        onToolUsed('select');
-      }
+      const commitCrop = async () => {
+        let finalPath = croppedDataUrl;
+        if (typeof window !== 'undefined' && window.electronAPI?.importPastedImage) {
+          try {
+            finalPath = await window.electronAPI.importPastedImage(croppedDataUrl);
+          } catch (err) {
+            console.warn('Failed to save cropped image to assets folder:', err);
+          }
+        }
+        if (onImageCropped) {
+          onImageCropped(finalPath, adjustedAnnotations);
+        }
+        if (onToolUsed) {
+          onToolUsed('select');
+        }
+      };
+
+      commitCrop();
     };
 
     const handleCancelCrop = () => {
@@ -1046,13 +1036,6 @@ export const KonvaCanvas = forwardRef<KonvaCanvasHandle, KonvaCanvasProps>(
                           x={Math.round(Math.cos(Math.PI / 4) * loupeRadius)}
                           y={Math.round(Math.sin(Math.PI / 4) * loupeRadius)}
                           draggable
-                          onDragMove={(e) => {
-                            const curX = e.target.x();
-                            const curY = e.target.y();
-                            const dist = Math.sqrt(curX * curX + curY * curY);
-                            const clampedRadius = Math.min(220, Math.max(45, Math.round(dist)));
-                            updateAnnotationItem(item.id, { radius: clampedRadius });
-                          }}
                           onDragEnd={(e) => {
                             const curX = e.target.x();
                             const curY = e.target.y();

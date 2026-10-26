@@ -10,14 +10,15 @@ import {
   net,
   systemPreferences,
   shell,
+  nativeImage,
 } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { execFile } from 'child_process';
 import { pathToFileURL } from 'url';
 import JSZip from 'jszip';
-import { createWorker } from 'tesseract.js';
 import type { SopProject, ErrorFaqItem, OcrAnalysisResult } from '../src/types/sop';
+import { RELEASE_FEATURES } from '../src/config/releaseFeatures';
 
 // Register custom protocol for local asset streaming with CORS enabled
 protocol.registerSchemesAsPrivileged([
@@ -38,11 +39,18 @@ let overlayWindow: BrowserWindow | null = null;
 let isCapturing = false;
 let lastActiveProject: SopProject | null = null;
 let currentRetakeStepId: string | null = null;
-const ERROR_FAQ_ENABLED = false;
+let isAppQuitting = false;
 
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
-if (!hasSingleInstanceLock) {
-  app.quit();
+app.on('before-quit', () => {
+  isAppQuitting = true;
+});
+
+if (app.isPackaged) {
+  const hasSingleInstanceLock = app.requestSingleInstanceLock();
+  if (!hasSingleInstanceLock) {
+    appendRuntimeLog('[App] Another instance is already running in production - quitting');
+    app.quit();
+  }
 }
 
 function appendRuntimeLog(message: string, error?: unknown): void {
@@ -118,7 +126,102 @@ const getAssetsDir = (): string => path.join(getWorkspaceRoot(), 'stepflow_asset
 const getProjectsDir = (): string => path.join(getWorkspaceRoot(), 'projects');
 const getErrorCatalogDir = (): string => path.join(getWorkspaceRoot(), 'error_catalog');
 
+function toStepflowAssetUrl(filePath: string): string {
+  const safePath = filePath.replace(/\\/g, '/');
+  return `stepflow-asset://local/${encodeURIComponent(safePath)}`;
+}
+
+function resolveStepflowAssetPath(urlOrPath: string): string {
+  let raw = (urlOrPath || '').trim();
+  if (raw.startsWith('file://')) {
+    try {
+      raw = decodeURIComponent(raw.replace(/^file:\/\//i, ''));
+    } catch {
+      raw = raw.replace(/^file:\/\//i, '');
+    }
+  } else if (raw.startsWith('stepflow-asset://')) {
+    raw = raw.replace(/^stepflow-asset:\/\//i, '');
+    if (raw.toLowerCase().startsWith('local/')) {
+      raw = raw.slice('local/'.length);
+    }
+    const queryIdx = raw.indexOf('?');
+    if (queryIdx !== -1) raw = raw.slice(0, queryIdx);
+    const hashIdx = raw.indexOf('#');
+    if (hashIdx !== -1) raw = raw.slice(0, hashIdx);
+
+    raw = raw.replace(/^\/+/, '');
+    try {
+      raw = decodeURIComponent(raw);
+    } catch {
+      // Keep raw if not percent-encoded
+    }
+  }
+
+  if (process.platform === 'win32') {
+    raw = raw.replace(/^\/+([a-zA-Z]:)/, '$1');
+    if (/^[a-zA-Z]:/.test(raw)) {
+      raw = raw.charAt(0).toUpperCase() + raw.slice(1);
+    }
+  } else {
+    if (raw && !raw.startsWith('/')) {
+      const candidateWithSlash = `/${raw}`;
+      if (fs.existsSync(candidateWithSlash) || candidateWithSlash.startsWith(getAssetsDir())) {
+        raw = candidateWithSlash;
+      }
+    }
+  }
+
+  if (path.isAbsolute(raw)) {
+    return path.resolve(raw);
+  }
+  return path.resolve(getAssetsDir(), raw);
+}
+
+const ALLOWED_IMAGE_EXTENSIONS = new Set([
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.webp',
+  '.svg',
+  '.gif',
+  '.ico',
+  '.bmp',
+]);
+
+function isSafeAssetFile(filePath: string): boolean {
+  try {
+    if (!filePath || typeof filePath !== 'string') return false;
+    const ext = path.extname(filePath).toLowerCase();
+    if (!ALLOWED_IMAGE_EXTENSIONS.has(ext)) {
+      return false;
+    }
+    if (!fs.existsSync(filePath)) {
+      return false;
+    }
+    const realTarget = fs.realpathSync(filePath);
+    const allowedAssets = fs.existsSync(getAssetsDir())
+      ? fs.realpathSync(getAssetsDir())
+      : path.resolve(getAssetsDir());
+    const allowedWorkspace = fs.existsSync(getWorkspaceRoot())
+      ? fs.realpathSync(getWorkspaceRoot())
+      : path.resolve(getWorkspaceRoot());
+
+    const norm = (p: string) => (process.platform === 'win32' ? p.toLowerCase() : p);
+    const targetNorm = norm(realTarget);
+    const assetsNorm = norm(allowedAssets);
+    const wsNorm = norm(allowedWorkspace);
+
+    const isInside = (baseNorm: string) =>
+      targetNorm === baseNorm || targetNorm.startsWith(`${baseNorm}${path.sep}`);
+
+    return isInside(assetsNorm) || isInside(wsNorm);
+  } catch {
+    return false;
+  }
+}
+
 const recentlySavedByApp = new Set<string>();
+const saveSuppressionTimers = new Map<string, NodeJS.Timeout>();
 let projectWatcher: fs.FSWatcher | null = null;
 const debounceTimers = new Map<string, NodeJS.Timeout>();
 
@@ -173,6 +276,10 @@ function setupProjectsFileWatcher(): void {
         }, 150)
       );
     });
+
+    projectWatcher.on('error', (err) => {
+      console.warn('[ProjectsWatcher] File watcher encountered an error:', err);
+    });
   } catch (err) {
     console.error('[ProjectsWatcher] Failed to start watcher:', err);
   }
@@ -182,6 +289,193 @@ async function ensureDirectories(): Promise<void> {
   await fs.promises.mkdir(getAssetsDir(), { recursive: true });
   await fs.promises.mkdir(getProjectsDir(), { recursive: true });
   await fs.promises.mkdir(getErrorCatalogDir(), { recursive: true });
+}
+
+interface SelectionRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+function requestSelectionRect(display: Electron.Display): Promise<SelectionRect | null> {
+  return new Promise((resolve) => {
+    const requestId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const submitChannel = `selection-rect-submit-${requestId}`;
+    const cancelChannel = `selection-rect-cancel-${requestId}`;
+
+    let resolved = false;
+    const finish = (value: SelectionRect | null) => {
+      if (resolved) return;
+      resolved = true;
+      ipcMain.removeAllListeners(submitChannel);
+      ipcMain.removeAllListeners(cancelChannel);
+      resolve(value);
+    };
+
+    const selectorWindow = new BrowserWindow({
+      x: display.bounds.x,
+      y: display.bounds.y,
+      width: display.bounds.width,
+      height: display.bounds.height,
+      frame: false,
+      transparent: true,
+      skipTaskbar: true,
+      alwaysOnTop: true,
+      movable: false,
+      resizable: false,
+      focusable: true,
+      show: false,
+      backgroundColor: '#00000001',
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false,
+        sandbox: false,
+      },
+    });
+
+    const cleanupAndClose = () => {
+      try {
+        if (!selectorWindow.isDestroyed()) {
+          selectorWindow.close();
+        }
+      } catch {}
+    };
+
+    ipcMain.once(submitChannel, (_event, rect: SelectionRect) => {
+      finish(rect);
+      cleanupAndClose();
+    });
+
+    ipcMain.once(cancelChannel, () => {
+      finish(null);
+      cleanupAndClose();
+    });
+
+    selectorWindow.on('closed', () => {
+      finish(null);
+    });
+
+    const html = `
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html, body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        cursor: crosshair;
+        background: rgba(15, 23, 42, 0.2);
+        user-select: none;
+      }
+      #hint {
+        position: fixed;
+        top: 14px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(15, 23, 42, 0.88);
+        color: #e2e8f0;
+        font-family: Segoe UI, Arial, sans-serif;
+        font-size: 12px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid rgba(148, 163, 184, 0.45);
+        pointer-events: none;
+      }
+      #selection {
+        position: fixed;
+        border: 2px solid #38bdf8;
+        background: rgba(56, 189, 248, 0.12);
+        display: none;
+        box-shadow: 0 0 0 99999px rgba(2, 6, 23, 0.4);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="hint">Drag to capture a region. Press Esc to cancel.</div>
+    <div id="selection"></div>
+    <script>
+      const { ipcRenderer } = require('electron');
+      const submitChannel = ${JSON.stringify(submitChannel)};
+      const cancelChannel = ${JSON.stringify(cancelChannel)};
+      const selectionEl = document.getElementById('selection');
+      let dragging = false;
+      let startX = 0;
+      let startY = 0;
+      let currentX = 0;
+      let currentY = 0;
+
+      function rectFromPoints() {
+        const left = Math.min(startX, currentX);
+        const top = Math.min(startY, currentY);
+        const width = Math.abs(currentX - startX);
+        const height = Math.abs(currentY - startY);
+        return { x: left, y: top, width, height };
+      }
+
+      function renderRect() {
+        const r = rectFromPoints();
+        selectionEl.style.display = 'block';
+        selectionEl.style.left = r.x + 'px';
+        selectionEl.style.top = r.y + 'px';
+        selectionEl.style.width = r.width + 'px';
+        selectionEl.style.height = r.height + 'px';
+      }
+
+      window.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        dragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        currentX = e.clientX;
+        currentY = e.clientY;
+        renderRect();
+      });
+
+      window.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        currentX = e.clientX;
+        currentY = e.clientY;
+        renderRect();
+      });
+
+      window.addEventListener('mouseup', (e) => {
+        if (!dragging) return;
+        dragging = false;
+        currentX = e.clientX;
+        currentY = e.clientY;
+        const rect = rectFromPoints();
+        if (rect.width < 4 || rect.height < 4) {
+          ipcRenderer.send(cancelChannel);
+          return;
+        }
+        ipcRenderer.send(submitChannel, rect);
+      });
+
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          ipcRenderer.send(cancelChannel);
+        }
+      });
+
+      window.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        ipcRenderer.send(cancelChannel);
+      });
+    </script>
+  </body>
+</html>
+`;
+
+    selectorWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    selectorWindow.once('ready-to-show', () => {
+      selectorWindow.show();
+      selectorWindow.focus();
+    });
+  });
 }
 
 function loadRoute(win: BrowserWindow, route: string): void {
@@ -215,6 +509,28 @@ function applyWindowSecurity(win: BrowserWindow): void {
     }
     event.preventDefault();
   });
+
+  win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    appendRuntimeLog(`[Renderer lvl=${level}] ${message} (${sourceId}:${line})`);
+    if (level >= 2) {
+      console.error(`[Renderer error] ${message} (${sourceId}:${line})`);
+    } else {
+      console.log(`[Renderer] ${message}`);
+    }
+  });
+}
+
+function getMcpServerPath(): string {
+  const candidates = [
+    path.join(__dirname, 'mcp-server.js'),
+    path.join(__dirname, 'electron', 'mcp-server.js'),
+    path.join(app.getAppPath(), 'dist-electron', 'electron', 'mcp-server.js'),
+    path.join(app.getAppPath(), 'dist-electron', 'mcp-server.js'),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return path.join(app.getAppPath(), 'dist-electron', 'electron', 'mcp-server.js');
 }
 
 function getPreloadPath(): string {
@@ -249,7 +565,7 @@ function createStudioWindow(): BrowserWindow {
     frame: process.platform === 'darwin' ? false : true,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 16, y: 16 },
-    backgroundColor: '#0f172a',
+    backgroundColor: '#fafafa',
     webPreferences: {
       preload: getPreloadPath(),
       contextIsolation: true,
@@ -294,6 +610,13 @@ function createStudioWindow(): BrowserWindow {
     );
   });
 
+  studioWindow.on('close', (e) => {
+    if (process.platform === 'darwin' && !isAppQuitting) {
+      e.preventDefault();
+      studioWindow?.hide();
+    }
+  });
+
   studioWindow.on('closed', () => {
     clearTimeout(showFallbackTimer);
     studioWindow = null;
@@ -323,8 +646,8 @@ function createOverlayWindow(): BrowserWindow {
   const enableRendererSandbox = process.platform !== 'win32';
 
   overlayWindow = new BrowserWindow({
-    width: 340,
-    height: 76,
+    width: 520,
+    height: 84,
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
@@ -369,7 +692,7 @@ function setOverlayMode(mode: 'collapsed' | 'expanded' | 'preview' | 'error_matc
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
 
   const modeSizes: Record<'collapsed' | 'expanded' | 'preview' | 'error_match' | 'error_new' | 'search', { width: number; height: number }> = {
-    collapsed: { width: 340, height: 76 },
+    collapsed: { width: 520, height: 84 },
     expanded: { width: 380, height: 280 },
     preview: { width: 340, height: 180 },
     error_match: { width: 430, height: 380 },
@@ -460,6 +783,47 @@ async function performCapture(isRetake = false, mode: 'fullscreen' | 'selection'
     }
 
     let captureSuccess = false;
+    const cursorPoint = screen.getCursorScreenPoint();
+    const activeDisplay = screen.getDisplayNearestPoint(cursorPoint);
+    const scaleFactor = activeDisplay.scaleFactor || 1;
+    let selectedRectDip: SelectionRect | null = null;
+
+    appendRuntimeLog(
+      `[Capture] start mode=${mode} isRetake=${String(Boolean(isRetake || currentRetakeStepId))} displayId=${activeDisplay.id} cursor=(${cursorPoint.x},${cursorPoint.y}) displayBounds=(${activeDisplay.bounds.x},${activeDisplay.bounds.y},${activeDisplay.bounds.width}x${activeDisplay.bounds.height}) scale=${scaleFactor}`
+    );
+
+    if (mode === 'selection' && process.platform !== 'darwin') {
+      selectedRectDip = await requestSelectionRect(activeDisplay);
+      if (!selectedRectDip) {
+        appendRuntimeLog('[Capture] selection cancelled before screenshot');
+        if (isRetake || currentRetakeStepId) {
+          if (overlayWindow && !overlayWindow.isDestroyed()) {
+            overlayWindow.hide();
+          }
+          if (studioWindow && !studioWindow.isDestroyed()) {
+            if (studioWindow.isMinimized()) studioWindow.restore();
+            studioWindow.show();
+            studioWindow.focus();
+            studioWindow.webContents.send('studio-restored');
+          }
+          currentRetakeStepId = null;
+        } else {
+          if (overlayWasVisible && overlayWindow && !overlayWindow.isDestroyed()) {
+            overlayWindow.showInactive();
+          }
+          if (studioWasVisible && studioWindow && !studioWindow.isDestroyed()) {
+            if (studioWindow.isMinimized()) studioWindow.restore();
+            studioWindow.show();
+            studioWindow.focus();
+          }
+        }
+        return null;
+      }
+
+      appendRuntimeLog(
+        `[Capture] selection rect dip=(${selectedRectDip.x},${selectedRectDip.y},${selectedRectDip.width}x${selectedRectDip.height})`
+      );
+    }
 
     // Strategy 1 (macOS): Native screencapture CLI
     if (process.platform === 'darwin') {
@@ -513,11 +877,12 @@ async function performCapture(isRetake = false, mode: 'fullscreen' | 'selection'
     // Strategy 2: Electron desktopCapturer (for Windows, Linux, or macOS fallback)
     if (!captureSuccess) {
       try {
-        const cursorPoint = screen.getCursorScreenPoint();
-        const activeDisplay = screen.getDisplayNearestPoint(cursorPoint);
-        const scaleFactor = activeDisplay.scaleFactor || 1;
         const captureWidth = Math.round(activeDisplay.size.width * scaleFactor);
         const captureHeight = Math.round(activeDisplay.size.height * scaleFactor);
+
+        appendRuntimeLog(
+          `[Capture] desktopCapturer requested size=${captureWidth}x${captureHeight} mode=${mode}`
+        );
 
         const sources = await desktopCapturer.getSources({
           types: ['screen'],
@@ -537,14 +902,42 @@ async function performCapture(isRetake = false, mode: 'fullscreen' | 'selection'
             targetSource = sources[0];
           }
 
-          const imgBuffer = targetSource.thumbnail.toPNG();
+          let imgBuffer = targetSource.thumbnail.toPNG();
           if (imgBuffer && imgBuffer.length > 0) {
+            if (mode === 'selection' && selectedRectDip) {
+              const image = nativeImage.createFromBuffer(imgBuffer);
+              const imageSize = image.getSize();
+              const cropX = Math.max(0, Math.floor(selectedRectDip.x * scaleFactor));
+              const cropY = Math.max(0, Math.floor(selectedRectDip.y * scaleFactor));
+              const cropWidth = Math.min(
+                imageSize.width - cropX,
+                Math.max(1, Math.floor(selectedRectDip.width * scaleFactor))
+              );
+              const cropHeight = Math.min(
+                imageSize.height - cropY,
+                Math.max(1, Math.floor(selectedRectDip.height * scaleFactor))
+              );
+
+              if (cropWidth > 1 && cropHeight > 1) {
+                appendRuntimeLog(
+                  `[Capture] crop applied px=(${cropX},${cropY},${cropWidth}x${cropHeight}) source=${imageSize.width}x${imageSize.height}`
+                );
+                imgBuffer = image.crop({ x: cropX, y: cropY, width: cropWidth, height: cropHeight }).toPNG();
+              } else {
+                appendRuntimeLog(
+                  `[Capture] crop skipped due to tiny region px=(${cropX},${cropY},${cropWidth}x${cropHeight})`
+                );
+              }
+            }
+
             await fs.promises.writeFile(filePath, imgBuffer);
             captureSuccess = true;
+            appendRuntimeLog(`[Capture] saved file=${filePath}`);
           }
         }
       } catch (capturerErr) {
         console.warn('[Capture] desktopCapturer failed:', capturerErr);
+        appendRuntimeLog('[Capture] desktopCapturer failed', capturerErr);
       }
     }
 
@@ -608,8 +1001,8 @@ async function performCapture(isRetake = false, mode: 'fullscreen' | 'selection'
       return fallbackDataUri;
     }
 
-    // Send a canonical path-based asset URL so Windows path parsing stays deterministic.
-    const capturePayload = `stepflow-asset:///${encodeURIComponent(filePath.replace(/\\/g, '/'))}`;
+    // Send a canonical host+path asset URL so standard URL parsing works across macOS and Windows.
+    const capturePayload = toStepflowAssetUrl(filePath);
 
     // Broadcast capture-completed event to all active windows
     if (studioWindow && !studioWindow.isDestroyed()) {
@@ -701,7 +1094,7 @@ function registerGlobalShortcuts(): void {
     console.warn(`[Shortcut] Registration failed for ${selectionShortcut}`);
   }
 
-  if (ERROR_FAQ_ENABLED) {
+  if (RELEASE_FEATURES.errorFaq) {
     // Quick Search HUD shortcut: Cmd/Ctrl+Shift+F
     const searchShortcut = 'CommandOrControl+Shift+F';
     const searchSuccess = globalShortcut.register(searchShortcut, () => {
@@ -767,11 +1160,15 @@ function emitOcrStatus(status: {
 }
 
 async function getOcrWorker(): Promise<any> {
+  if (!RELEASE_FEATURES.errorFaq) {
+    throw new Error('OCR is disabled in Release 1');
+  }
   if (ocrWorkerInstance) return ocrWorkerInstance;
   if (ocrWorkerInitPromise) return await ocrWorkerInitPromise;
 
   ocrWorkerInitPromise = (async () => {
     appendRuntimeLog('[OCR] Initializing bundled Tesseract worker...');
+    const { createWorker } = await import('tesseract.js');
     const worker = await createWorker('eng');
     ocrWorkerInstance = worker;
     appendRuntimeLog('[OCR] Tesseract worker ready');
@@ -927,12 +1324,22 @@ async function deleteErrorFaqItem(id: string): Promise<boolean> {
 
 async function importPastedImageHelper(base64Data: string): Promise<string> {
   await ensureDirectories();
-  const raw = base64Data.replace(/^data:image\/\w+;base64,/, '');
+  const commaIdx = base64Data.indexOf(',');
+  const raw = commaIdx !== -1 ? base64Data.slice(commaIdx + 1) : base64Data;
   const buffer = Buffer.from(raw, 'base64');
-  const filename = `paste_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.png`;
+  let ext = '.png';
+  const match = base64Data.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,/i);
+  if (match) {
+    const mimeSub = match[1].toLowerCase();
+    if (mimeSub === 'jpeg' || mimeSub === 'jpg') ext = '.jpg';
+    else if (mimeSub === 'webp') ext = '.webp';
+    else if (mimeSub === 'gif') ext = '.gif';
+    else if (mimeSub === 'svg' || mimeSub === 'svg+xml') ext = '.svg';
+  }
+  const filename = `paste_${Date.now()}_${Math.random().toString(36).substring(2, 7)}${ext}`;
   const filePath = path.join(getAssetsDir(), filename);
   await fs.promises.writeFile(filePath, buffer);
-  return filePath;
+  return toStepflowAssetUrl(filePath);
 }
 
 async function analyzeImageWithOcr(imagePathOrBase64: string): Promise<OcrAnalysisResult> {
@@ -940,22 +1347,9 @@ async function analyzeImageWithOcr(imagePathOrBase64: string): Promise<OcrAnalys
   const assetsDir = getAssetsDir();
   emitOcrStatus({ phase: 'preparing', progress: 0.06, message: 'Preparing image input...' });
 
-  const normalizeInputPath = (raw: string): string => {
-    let normalized = raw || '';
-    if (normalized.startsWith('file://')) {
-      try {
-        normalized = decodeURIComponent(normalized.replace(/^file:\/\//, ''));
-      } catch {
-        normalized = normalized.replace(/^file:\/\//, '');
-      }
-    }
-    if (process.platform === 'win32' && normalized.startsWith('/') && /^[a-zA-Z]:/.test(normalized.slice(1))) {
-      normalized = normalized.slice(1);
-    }
-    return normalized;
-  };
-
-  let targetFilePath = normalizeInputPath(imagePathOrBase64);
+  let targetFilePath = imagePathOrBase64.startsWith('data:image/')
+    ? imagePathOrBase64
+    : resolveStepflowAssetPath(imagePathOrBase64);
   let imageBuffer: Buffer | null = null;
 
   if (imagePathOrBase64.startsWith('data:image/')) {
@@ -1009,6 +1403,108 @@ async function analyzeImageWithOcr(imagePathOrBase64: string): Promise<OcrAnalys
     imagePath: targetFilePath,
     bestMatch,
   };
+}
+
+const projectSaveQueues = new Map<string, Promise<boolean>>();
+
+function queueProjectSave(projectId: string, fn: () => Promise<boolean>): Promise<boolean> {
+  const previous = projectSaveQueues.get(projectId) || Promise.resolve(true);
+  const next = previous
+    .catch(() => true)
+    .then(fn);
+  projectSaveQueues.set(projectId, next);
+  next.finally(() => {
+    if (projectSaveQueues.get(projectId) === next) {
+      projectSaveQueues.delete(projectId);
+    }
+  });
+  return next;
+}
+
+async function cleanupOrphanedAssets(): Promise<void> {
+  try {
+    await ensureDirectories();
+    const assetsDir = getAssetsDir();
+    const projectsDir = getProjectsDir();
+    if (!fs.existsSync(assetsDir) || !fs.existsSync(projectsDir)) return;
+
+    // 1. Gather all referenced asset filenames from all projects
+    const referencedFiles = new Set<string>();
+
+    if (lastActiveProject) {
+      if (Array.isArray(lastActiveProject.steps)) {
+        for (const s of lastActiveProject.steps) {
+          if (s.image?.originalImagePath) {
+            const resolved = resolveStepflowAssetPath(s.image.originalImagePath);
+            referencedFiles.add(path.basename(resolved).toLowerCase());
+          }
+        }
+      }
+      if (lastActiveProject.coverPage?.backgroundImage) {
+        const resolvedCover = resolveStepflowAssetPath(lastActiveProject.coverPage.backgroundImage);
+        referencedFiles.add(path.basename(resolvedCover).toLowerCase());
+      }
+    }
+
+    const projectFiles = await fs.promises.readdir(projectsDir).catch(() => []);
+    for (const pf of projectFiles) {
+      if (!pf.endsWith('.json')) continue;
+      try {
+        const raw = await fs.promises.readFile(path.join(projectsDir, pf), 'utf-8');
+        const proj = JSON.parse(raw) as SopProject;
+        if (proj && Array.isArray(proj.steps)) {
+          for (const s of proj.steps) {
+            if (s.image?.originalImagePath) {
+              const resolved = resolveStepflowAssetPath(s.image.originalImagePath);
+              referencedFiles.add(path.basename(resolved).toLowerCase());
+            }
+          }
+        }
+        if (proj?.coverPage?.backgroundImage) {
+          const resolvedCover = resolveStepflowAssetPath(proj.coverPage.backgroundImage);
+          referencedFiles.add(path.basename(resolvedCover).toLowerCase());
+        }
+      } catch {
+        // Skip invalid JSON
+      }
+    }
+
+    // 2. Also check error catalog if enabled
+    if (RELEASE_FEATURES.errorFaq) {
+      const errDir = getErrorCatalogDir();
+      if (fs.existsSync(errDir)) {
+        const errFiles = await fs.promises.readdir(errDir).catch(() => []);
+        for (const ef of errFiles) {
+          if (!ef.endsWith('.json')) continue;
+          try {
+            const raw = await fs.promises.readFile(path.join(errDir, ef), 'utf-8');
+            const item = JSON.parse(raw) as ErrorFaqItem;
+            if (item?.imagePath) {
+              const resolved = resolveStepflowAssetPath(item.imagePath);
+              referencedFiles.add(path.basename(resolved).toLowerCase());
+            }
+          } catch {}
+        }
+      }
+    }
+
+    // 3. Inspect stepflow_assets directory and safely unlink unreferenced items older than 1 hour
+    const existingAssets = await fs.promises.readdir(assetsDir).catch(() => []);
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+
+    for (const asset of existingAssets) {
+      if (referencedFiles.has(asset.toLowerCase())) continue;
+      const fullPath = path.join(assetsDir, asset);
+      try {
+        const stat = await fs.promises.stat(fullPath);
+        if (stat.mtimeMs < oneHourAgo) {
+          await fs.promises.unlink(fullPath).catch(() => {});
+        }
+      } catch {}
+    }
+  } catch (err) {
+    console.warn('[AssetCleanup] Background cleanup note:', err);
+  }
 }
 
 function registerIpcHandlers(): void {
@@ -1130,7 +1626,7 @@ function registerIpcHandlers(): void {
 
   // Error & FAQ Knowledge Base + OCR
   ipcMain.handle('analyze-error-image', async (_event, imagePathOrBase64: string): Promise<OcrAnalysisResult> => {
-    if (!ERROR_FAQ_ENABLED) {
+    if (!RELEASE_FEATURES.errorFaq) {
       return {
         rawText: '',
         detectedTitle: '',
@@ -1142,22 +1638,21 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('list-error-faq', async (): Promise<ErrorFaqItem[]> => {
-    if (!ERROR_FAQ_ENABLED) return [];
+    if (!RELEASE_FEATURES.errorFaq) return [];
     return await listErrorFaqItems();
   });
 
   ipcMain.handle('save-error-faq', async (_event, item: ErrorFaqItem): Promise<boolean> => {
-    if (!ERROR_FAQ_ENABLED) return false;
+    if (!RELEASE_FEATURES.errorFaq) return false;
     return await saveErrorFaqItem(item);
   });
 
   ipcMain.handle('delete-error-faq', async (_event, id: string): Promise<boolean> => {
-    if (!ERROR_FAQ_ENABLED) return false;
+    if (!RELEASE_FEATURES.errorFaq) return false;
     return await deleteErrorFaqItem(id);
   });
 
   ipcMain.handle('import-pasted-image', async (_event, base64Data: string): Promise<string> => {
-    if (!ERROR_FAQ_ENABLED) return '';
     return await importPastedImageHelper(base64Data);
   });
 
@@ -1168,20 +1663,38 @@ function registerIpcHandlers(): void {
       const projectsDir = getProjectsDir();
       const files = await fs.promises.readdir(projectsDir);
       const jsonFiles = files.filter((f) => f.endsWith('.json'));
-      const projects: SopProject[] = [];
+      const projectMap = new Map<string, { project: SopProject; file: string; mtime: number }>();
 
       for (const file of jsonFiles) {
         try {
           const filePath = path.join(projectsDir, file);
+          const stat = await fs.promises.stat(filePath);
           const raw = await fs.promises.readFile(filePath, 'utf-8');
           const project = JSON.parse(raw) as SopProject;
           if (project && project.id) {
-            projects.push(project);
+            const existing = projectMap.get(project.id);
+            const projectTime = new Date(project.updatedAt || project.createdAt || 0).getTime() || stat.mtimeMs;
+            if (!existing) {
+              projectMap.set(project.id, { project, file, mtime: projectTime });
+            } else {
+              if (projectTime >= existing.mtime) {
+                if (!existing.file.startsWith('proj_') && file.startsWith('proj_')) {
+                  fs.promises.unlink(path.join(projectsDir, existing.file)).catch(() => {});
+                }
+                projectMap.set(project.id, { project, file, mtime: projectTime });
+              } else {
+                if (!file.startsWith('proj_') && existing.file.startsWith('proj_')) {
+                  fs.promises.unlink(filePath).catch(() => {});
+                }
+              }
+            }
           }
         } catch (err) {
           console.warn(`[ProjectIO] Could not parse project file ${file}:`, err);
         }
       }
+
+      const projects = Array.from(projectMap.values()).map((v) => v.project);
 
       projects.sort((a, b) => {
         const timeA = new Date(a.updatedAt || a.createdAt || 0).getTime();
@@ -1197,35 +1710,69 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('save-project', async (_event, project: SopProject): Promise<boolean> => {
-    try {
-      if (!project || typeof project !== 'object' || !project.id) {
-        console.error('[ProjectIO] Invalid project object provided to save-project');
-        return false;
-      }
-
-      await ensureDirectories();
-      const safeId = project.id.replace(/[^a-zA-Z0-9_-]/g, '_');
-      const filePath = path.join(getProjectsDir(), `proj_${safeId}.json`);
-      const tempPath = path.join(getProjectsDir(), `proj_${safeId}.${Date.now()}.tmp`);
-
-      const now = new Date().toISOString();
-      if (!project.createdAt) {
-        project.createdAt = now;
-      }
-      project.updatedAt = now;
-      lastActiveProject = project;
-
-      recentlySavedByApp.add(filePath);
-      setTimeout(() => recentlySavedByApp.delete(filePath), 800);
-
-      // Atomic write to prevent file corruption on crash or interruption
-      await fs.promises.writeFile(tempPath, JSON.stringify(project, null, 2), 'utf-8');
-      await fs.promises.rename(tempPath, filePath);
-      return true;
-    } catch (err) {
-      console.error('[ProjectIO] Failed to save project:', err);
+    if (!project || typeof project !== 'object' || !project.id || typeof project.id !== 'string') {
+      console.error('[ProjectIO] Invalid project object provided to save-project');
       return false;
     }
+
+    return queueProjectSave(project.id, async () => {
+      try {
+        await ensureDirectories();
+        const safeId = project.id.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const filePath = path.join(getProjectsDir(), `proj_${safeId}.json`);
+        const tempPath = path.join(
+          getProjectsDir(),
+          `proj_${safeId}.${Date.now()}.${Math.random().toString(36).substring(2, 7)}.tmp`
+        );
+
+        const now = new Date().toISOString();
+        if (!project.createdAt) {
+          project.createdAt = now;
+        }
+        project.updatedAt = now;
+
+        // Defense-in-depth: convert any inline base64 images to local assets so project JSON stays lightweight
+        if (project.coverPage?.backgroundImage?.startsWith('data:image/')) {
+          try {
+            project.coverPage.backgroundImage = await importPastedImageHelper(project.coverPage.backgroundImage);
+          } catch (e) {
+            console.warn('[ProjectIO] Failed to convert cover base64:', e);
+          }
+        }
+        if (Array.isArray(project.steps)) {
+          for (const step of project.steps) {
+            if (step.image?.originalImagePath?.startsWith('data:image/')) {
+              try {
+                step.image.originalImagePath = await importPastedImageHelper(step.image.originalImagePath);
+              } catch (e) {
+                console.warn('[ProjectIO] Failed to convert step base64:', e);
+              }
+            }
+          }
+        }
+
+        lastActiveProject = project;
+
+        const existingTimer = saveSuppressionTimers.get(filePath);
+        if (existingTimer) clearTimeout(existingTimer);
+        recentlySavedByApp.add(filePath);
+        saveSuppressionTimers.set(
+          filePath,
+          setTimeout(() => {
+            recentlySavedByApp.delete(filePath);
+            saveSuppressionTimers.delete(filePath);
+          }, 1000)
+        );
+
+        // Atomic write via unique temp file and rename
+        await fs.promises.writeFile(tempPath, JSON.stringify(project, null, 2), 'utf-8');
+        await fs.promises.rename(tempPath, filePath);
+        return true;
+      } catch (err) {
+        console.error('[ProjectIO] Failed to save project:', err);
+        return false;
+      }
+    });
   });
 
   ipcMain.handle('load-project', async (_event, id: string): Promise<SopProject | null> => {
@@ -1290,6 +1837,10 @@ function registerIpcHandlers(): void {
       } catch (err: any) {
         if (err.code !== 'ENOENT') console.warn(`[ProjectIO] Unlink error for ${legacyPath}:`, err);
       }
+
+      setTimeout(() => {
+        cleanupOrphanedAssets().catch(() => {});
+      }, 1500);
 
       return deleted || true;
     } catch (err) {
@@ -1428,6 +1979,7 @@ function registerIpcHandlers(): void {
       path: getWorkspaceRoot(),
       isCustom: Boolean(customStorageDir),
       defaultPath: app.getPath('userData'),
+      mcpServerPath: getMcpServerPath(),
     };
   });
 
@@ -1503,6 +2055,7 @@ function registerIpcHandlers(): void {
         path: getWorkspaceRoot(),
         isCustom: true,
         defaultPath: app.getPath('userData'),
+        mcpServerPath: getMcpServerPath(),
       };
 
       if (studioWindow && !studioWindow.isDestroyed()) {
@@ -1530,6 +2083,7 @@ function registerIpcHandlers(): void {
         path: getWorkspaceRoot(),
         isCustom: false,
         defaultPath: app.getPath('userData'),
+        mcpServerPath: getMcpServerPath(),
       };
 
       if (studioWindow && !studioWindow.isDestroyed()) {
@@ -1591,32 +2145,54 @@ function registerIpcHandlers(): void {
         const assetsFolder = zip.folder('assets');
 
         // 3. Collect and embed assets
+        if (bundledProject.coverPage?.backgroundImage) {
+          const rawCover = bundledProject.coverPage.backgroundImage;
+          const coverFileName = `cover_${bundledProject.id.replace(/[^a-zA-Z0-9_-]/g, '_')}.png`;
+
+          if (rawCover.startsWith('data:image/')) {
+            const commaIdx = rawCover.indexOf(',');
+            const base64Data = commaIdx !== -1 ? rawCover.slice(commaIdx + 1) : rawCover;
+            if (assetsFolder) {
+              assetsFolder.file(coverFileName, Buffer.from(base64Data, 'base64'));
+              bundledProject.coverPage.backgroundImage = `assets/${coverFileName}`;
+            }
+          } else {
+            const resolved = resolveStepflowAssetPath(rawCover);
+            if (isSafeAssetFile(resolved)) {
+              const imgBuffer = await fs.promises.readFile(resolved);
+              if (assetsFolder) {
+                assetsFolder.file(coverFileName, imgBuffer);
+                bundledProject.coverPage.backgroundImage = `assets/${coverFileName}`;
+              }
+            } else {
+              console.warn('[ExportBundle] Skipped unsafe cover asset path:', rawCover);
+            }
+          }
+        }
+
         for (const step of bundledProject.steps) {
           if (step.image && step.image.originalImagePath) {
             const rawPath = step.image.originalImagePath;
             const assetFileName = `step_${step.id.replace(/[^a-zA-Z0-9_-]/g, '_')}.png`;
 
             if (rawPath.startsWith('data:image/')) {
-              const base64Data = rawPath.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
+              const commaIdx = rawPath.indexOf(',');
+              const base64Data = commaIdx !== -1 ? rawPath.slice(commaIdx + 1) : rawPath;
               if (assetsFolder) {
                 assetsFolder.file(assetFileName, Buffer.from(base64Data, 'base64'));
                 step.image.originalImagePath = `assets/${assetFileName}`;
               }
             } else {
-              let cleanPath = rawPath.replace(/^stepflow-asset:\/\//, '');
-              if (process.platform === 'win32' && cleanPath.startsWith('/') && /^[a-zA-Z]:/.test(cleanPath.slice(1))) {
-                cleanPath = cleanPath.slice(1);
-              }
-              const resolved = path.isAbsolute(cleanPath)
-                ? cleanPath
-                : path.join(getAssetsDir(), cleanPath);
+              const resolved = resolveStepflowAssetPath(rawPath);
 
-              if (fs.existsSync(resolved)) {
+              if (isSafeAssetFile(resolved)) {
                 const imgBuffer = await fs.promises.readFile(resolved);
                 if (assetsFolder) {
                   assetsFolder.file(assetFileName, imgBuffer);
                   step.image.originalImagePath = `assets/${assetFileName}`;
                 }
+              } else {
+                console.warn('[ExportBundle] Skipped unsafe asset path:', rawPath);
               }
             }
           }
@@ -1660,8 +2236,12 @@ function registerIpcHandlers(): void {
         const fileBuffer = await fs.promises.readFile(bundlePath);
         const zip = await JSZip.loadAsync(fileBuffer);
 
-        // Find project.json
-        const projectJsonFile = zip.file('project.json') || zip.file(/^[^/]+\.json$/)[0];
+        // Find project.json; exclude manifest.json from fallback matching
+        let projectJsonFile = zip.file('project.json');
+        if (!projectJsonFile) {
+          const jsonCandidates = zip.file(/^[^/]+\.json$/);
+          projectJsonFile = jsonCandidates.find((f) => f.name !== 'manifest.json') || null;
+        }
         if (!projectJsonFile) {
           return { success: false, error: 'Invalid StepFlow bundle: missing project.json' };
         }
@@ -1673,10 +2253,43 @@ function registerIpcHandlers(): void {
           return { success: false, error: 'Invalid project data in bundle' };
         }
 
+        // Defensive normalization
+        project.steps = Array.isArray(project.steps) ? project.steps : [];
+        for (let i = 0; i < project.steps.length; i++) {
+          const s = project.steps[i];
+          if (!s.id) s.id = `step_${Date.now()}_${i}`;
+          s.order = typeof s.order === 'number' ? s.order : i + 1;
+          s.title = typeof s.title === 'string' ? s.title : `Step ${s.order}`;
+          s.description = typeof s.description === 'string' ? s.description : '';
+          if (s.image) {
+            s.image.annotations = Array.isArray(s.image.annotations) ? s.image.annotations : [];
+          }
+        }
+
         await ensureDirectories();
         const assetsDir = getAssetsDir();
 
-        // Extract assets
+        // Extract assets safely (with Zip-Slip and path traversal protection)
+        if (project.coverPage?.backgroundImage) {
+          const rawCover = project.coverPage.backgroundImage;
+          const zipCoverPath = rawCover.startsWith('assets/') ? rawCover : `assets/${rawCover}`;
+          const zipCoverFile = zip.file(zipCoverPath) || zip.file(rawCover);
+
+          if (zipCoverFile) {
+            const assetBuffer = await zipCoverFile.async('nodebuffer');
+            let ext = path.extname(zipCoverPath).toLowerCase();
+            if (!ALLOWED_IMAGE_EXTENSIONS.has(ext)) {
+              ext = '.png';
+            }
+            const targetName = `cover_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext}`;
+            const targetPath = path.resolve(assetsDir, path.basename(targetName));
+            if (targetPath.startsWith(assetsDir)) {
+              await fs.promises.writeFile(targetPath, assetBuffer);
+              project.coverPage.backgroundImage = toStepflowAssetUrl(targetPath);
+            }
+          }
+        }
+
         if (Array.isArray(project.steps)) {
           for (const step of project.steps) {
             if (step.image && step.image.originalImagePath) {
@@ -1686,18 +2299,24 @@ function registerIpcHandlers(): void {
 
               if (zipAssetFile) {
                 const assetBuffer = await zipAssetFile.async('nodebuffer');
-                const ext = path.extname(zipAssetPath) || '.png';
+                let ext = path.extname(zipAssetPath).toLowerCase();
+                if (!ALLOWED_IMAGE_EXTENSIONS.has(ext)) {
+                  ext = '.png';
+                }
                 const targetName = `step_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${ext}`;
-                const targetPath = path.join(assetsDir, targetName);
-                await fs.promises.writeFile(targetPath, assetBuffer);
-                step.image.originalImagePath = `stepflow-asset:///${encodeURIComponent(targetPath.replace(/\\/g, '/'))}`;
+                const targetPath = path.resolve(assetsDir, path.basename(targetName));
+                if (targetPath.startsWith(assetsDir)) {
+                  await fs.promises.writeFile(targetPath, assetBuffer);
+                  step.image.originalImagePath = toStepflowAssetUrl(targetPath);
+                }
               }
             }
           }
         }
 
         // Check for ID collision; if duplicate, assign fresh ID and suffix title
-        const existingPath = path.join(getProjectsDir(), `proj_${project.id.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`);
+        const initialSafeId = path.basename(project.id.replace(/[^a-zA-Z0-9_-]/g, '_'));
+        const existingPath = path.join(getProjectsDir(), `proj_${initialSafeId}.json`);
         if (fs.existsSync(existingPath)) {
           project.id = `proj_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
           project.name = `${project.name} (Imported)`;
@@ -1705,11 +2324,21 @@ function registerIpcHandlers(): void {
 
         project.updatedAt = new Date().toISOString();
 
-        // Save project into active projects directory
-        const savePath = path.join(getProjectsDir(), `proj_${project.id.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`);
+        // Save project into active projects directory atomically via queueProjectSave
+        const finalSafeId = path.basename(project.id.replace(/[^a-zA-Z0-9_-]/g, '_'));
+        const savePath = path.join(getProjectsDir(), `proj_${finalSafeId}.json`);
         recentlySavedByApp.add(savePath);
         setTimeout(() => recentlySavedByApp.delete(savePath), 800);
-        await fs.promises.writeFile(savePath, JSON.stringify(project, null, 2), 'utf-8');
+
+        await queueProjectSave(project.id, async () => {
+          const tempPath = path.join(
+            getProjectsDir(),
+            `proj_${finalSafeId}.${Date.now()}.${Math.random().toString(36).substring(2, 7)}.tmp`
+          );
+          await fs.promises.writeFile(tempPath, JSON.stringify(project, null, 2), 'utf-8');
+          await fs.promises.rename(tempPath, savePath);
+          return true;
+        });
 
         // Broadcast to studio window
         if (studioWindow && !studioWindow.isDestroyed()) {
@@ -1764,39 +2393,13 @@ app.whenReady().then(async () => {
   // Protocol handler for streaming local assets securely
   protocol.handle('stepflow-asset', (request) => {
     try {
-      let rawPath = request.url.replace(/^stepflow-asset:\/\//, '');
-      if (rawPath.startsWith('/')) {
-        rawPath = rawPath.slice(1);
-      }
+      const resolved = resolveStepflowAssetPath(request.url);
 
-      let decodedPath = decodeURIComponent(rawPath);
-
-      if (process.platform === 'win32') {
-        if (decodedPath.startsWith('/')) {
-          decodedPath = decodedPath.slice(1);
-        }
-        if (/^[a-zA-Z]:/.test(decodedPath)) {
-          decodedPath = decodedPath.charAt(0).toUpperCase() + decodedPath.slice(1);
-        }
-      }
-
-      const resolved = path.resolve(decodedPath);
-      const allowedDir = path.resolve(getAssetsDir());
-      const resolvedForCheck = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
-      const allowedForCheck = process.platform === 'win32' ? allowedDir.toLowerCase() : allowedDir;
-
-      // Security check: ensure the resolved path stays within the project asset directory.
-      const isWithinAllowedDir =
-        resolvedForCheck === allowedForCheck ||
-        resolvedForCheck.startsWith(`${allowedForCheck}${path.sep}`);
-
-      if (!isWithinAllowedDir) {
-        console.warn('[Protocol] Access denied for asset outside allowed directory:', resolved);
+      if (!isSafeAssetFile(resolved)) {
+        console.warn('[Protocol] Access denied or unsafe asset:', resolved);
         return new Response('Access denied', { status: 403 });
       }
-      if (!fs.existsSync(resolved)) {
-        return new Response('Asset not found', { status: 404 });
-      }
+
       return net.fetch(pathToFileURL(resolved).toString());
     } catch (err) {
       console.error('[Protocol] Error streaming asset:', err);
@@ -1813,6 +2416,11 @@ app.whenReady().then(async () => {
 
   createStudioWindow();
   appendRuntimeLog('[App] windows created');
+
+  // Schedule background cleanup of unreferenced orphan screenshot files after window init
+  setTimeout(() => {
+    cleanupOrphanedAssets().catch((err: unknown) => console.warn('[App] Startup asset cleanup notice:', err));
+  }, 15000);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0 || !studioWindow || studioWindow.isDestroyed()) {

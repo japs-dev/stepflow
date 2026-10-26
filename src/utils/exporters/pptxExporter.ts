@@ -1,6 +1,7 @@
 import PptxGenJS from 'pptxgenjs';
 import { DEFAULT_COVER_PAGE_SETTINGS, type SopProject, type CalloutType } from '../../types/sop';
 import { renderAnnotatedImage, prepareExportProject, getSafeFileName } from './imageHelper';
+import { stripMarkdown } from '../markdownHelper';
 
 /**
  * Strips '#' from hex color strings and ensures 6 characters
@@ -471,13 +472,7 @@ export async function buildPptxPresentation(project: SopProject): Promise<PptxGe
       });
 
       // Cleaned markdown description
-      const cleanDesc = step.description
-        .replace(/^###\s+/gm, '')
-        .replace(/^##\s+/gm, '')
-        .replace(/^#\s+/gm, '')
-        .replace(/^>\s+/gm, '    ')
-        .replace(/\*\*(.*?)\*\*/g, '$1')
-        .replace(/\*(.*?)\*/g, '$1');
+      const cleanDesc = stripMarkdown(step.description, { preserveNewlines: true });
 
       slide.addText(cleanDesc, {
         x: 1.1,

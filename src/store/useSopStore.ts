@@ -15,6 +15,7 @@ import { RELEASE_FEATURES } from '../config/releaseFeatures';
 
 const LOCAL_STORAGE_KEY = 'stepflow_projects';
 const ACTIVE_PROJECT_KEY = 'stepflow_active_project_id';
+const STORAGE_INITIALIZED_KEY = 'stepflow_storage_initialized';
 
 export interface SopState {
   // State
@@ -69,17 +70,80 @@ export interface SopState {
   setRecentCapture: (capture: string | null) => void;
 }
 
+// Helper to deduplicate projects by ID, keeping the latest updated version
+export function deduplicateProjects(projects: SopProject[]): SopProject[] {
+  const map = new Map<string, SopProject>();
+  for (const p of projects) {
+    if (!p || !p.id) continue;
+    const existing = map.get(p.id);
+    if (!existing) {
+      map.set(p.id, p);
+    } else {
+      const timeExisting = new Date(existing.updatedAt || existing.createdAt || 0).getTime();
+      const timeNew = new Date(p.updatedAt || p.createdAt || 0).getTime();
+      if (timeNew >= timeExisting) {
+        map.set(p.id, p);
+      }
+    }
+  }
+  return Array.from(map.values());
+}
+
 // Helper to save projects to storage and IPC if present
 function persistProjects(projects: SopProject[]) {
   try {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(projects));
+    const deduped = deduplicateProjects(projects);
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(deduped));
   } catch (err) {
-    console.error('Failed to save to localStorage:', err);
+    console.warn('Failed to save to localStorage (likely quota exceeded):', err);
+    // If quota is exceeded, attempt to save without heavy fields as emergency fallback
+    try {
+      const stripped = deduplicateProjects(projects).map((p) => ({
+        ...p,
+        steps: p.steps.map((s) => ({
+          ...s,
+          image: s.image?.originalImagePath?.startsWith('data:')
+            ? { ...s.image, originalImagePath: '' }
+            : s.image,
+        })),
+      }));
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stripped));
+    } catch {
+      // Disk storage via Electron IPC remains authoritative
+    }
   }
 }
 
+let pendingProjectBroadcast: { project: SopProject; projects: SopProject[] } | null = null;
+let pendingProjectBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function flushPendingProjectBroadcast() {
+  if (pendingProjectBroadcastTimer) {
+    clearTimeout(pendingProjectBroadcastTimer);
+    pendingProjectBroadcastTimer = null;
+  }
+  if (pendingProjectBroadcast) {
+    const pending = pendingProjectBroadcast;
+    pendingProjectBroadcast = null;
+    broadcastProjectUpdate(pending.project, pending.projects);
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', () => {
+    flushPendingProjectBroadcast();
+  });
+}
+
 function broadcastProjectUpdate(project: SopProject, projects: SopProject[]) {
-  persistProjects(projects);
+  if (pendingProjectBroadcastTimer) {
+    clearTimeout(pendingProjectBroadcastTimer);
+    pendingProjectBroadcastTimer = null;
+  }
+  pendingProjectBroadcast = null;
+
+  const deduped = deduplicateProjects(projects);
+  persistProjects(deduped);
   try {
     localStorage.setItem(ACTIVE_PROJECT_KEY, project.id);
   } catch (err) {
@@ -92,9 +156,6 @@ function broadcastProjectUpdate(project: SopProject, projects: SopProject[]) {
     window.electronAPI.syncActiveProject(project);
   }
 }
-
-let pendingProjectBroadcast: { project: SopProject; projects: SopProject[] } | null = null;
-let pendingProjectBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
 
 function scheduleProjectUpdateBroadcast(project: SopProject, projects: SopProject[], delayMs = 300) {
   pendingProjectBroadcast = { project, projects };
@@ -110,25 +171,44 @@ function scheduleProjectUpdateBroadcast(project: SopProject, projects: SopProjec
   }, delayMs);
 }
 
-function normalizeImagePathForRenderer(pathValue?: string | null): string | undefined {
+export function normalizeImagePathForRenderer(pathValue?: string | null): string | undefined {
   if (!pathValue) return undefined;
 
   const trimmed = pathValue.trim();
   if (!trimmed) return undefined;
 
-  if (trimmed.startsWith('data:') || trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+  if (
+    trimmed.startsWith('data:') ||
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('blob:')
+  ) {
     return trimmed;
   }
 
   if (trimmed.startsWith('stepflow-asset://')) {
-    const normalized = trimmed.replace(/^stepflow-asset:\/\/\//, 'stepflow-asset:///');
-    return normalized;
+    let raw = trimmed.replace(/^stepflow-asset:\/\//i, '');
+    if (raw.toLowerCase().startsWith('local/')) {
+      raw = raw.slice('local/'.length);
+    }
+    raw = raw.replace(/^\/+/, '');
+    let decoded = raw;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch {
+      // Keep raw if not valid percent-encoding
+    }
+    let safePath = decoded.replace(/\\/g, '/');
+    if (!safePath.startsWith('/') && !/^[a-zA-Z]:\//.test(safePath) && !safePath.startsWith('//')) {
+      safePath = `/${safePath}`;
+    }
+    return `stepflow-asset://local/${encodeURIComponent(safePath)}`;
   }
 
   // Treat absolute filesystem paths as local assets streamed via custom protocol.
   if (/^[a-zA-Z]:[\\/]/.test(trimmed) || trimmed.startsWith('\\\\') || trimmed.startsWith('/')) {
     const safePath = trimmed.replace(/\\/g, '/');
-    return `stepflow-asset:///${encodeURIComponent(safePath)}`;
+    return `stepflow-asset://local/${encodeURIComponent(safePath)}`;
   }
 
   return trimmed;
@@ -202,20 +282,33 @@ export function normalizeProjectSteps(project: SopProject): SopProject {
 
 function loadInitialProjects(): { projects: SopProject[]; activeProject: SopProject | null } {
   try {
-    const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(LOCAL_STORAGE_KEY) : null;
+    const isInitialized = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_INITIALIZED_KEY) === 'true' : false;
+
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        const normalized = parsed.map(normalizeProjectSteps);
+      if (Array.isArray(parsed)) {
+        if (parsed.length === 0) {
+          // Explicitly empty projects list; do not resurrect sample project
+          return { projects: [], activeProject: null };
+        }
+        const deduped = deduplicateProjects(parsed);
+        const normalized = deduped.map(normalizeProjectSteps);
         const savedActiveId = localStorage.getItem(ACTIVE_PROJECT_KEY);
         const active = savedActiveId ? normalized.find((p: SopProject) => p.id === savedActiveId) || normalized[0] : normalized[0];
         return { projects: normalized, activeProject: active || null };
       }
+    } else if (isInitialized) {
+      // Storage was already initialized previously and user currently has no projects
+      return { projects: [], activeProject: null };
     }
   } catch (err) {
     console.error('Failed to load from localStorage:', err);
   }
-  // Fallback to sample project
+  // True first run: seed sample project and mark storage initialized
+  try {
+    localStorage.setItem(STORAGE_INITIALIZED_KEY, 'true');
+  } catch {}
   persistProjects([SAMPLE_PROJECT]);
   return { projects: [SAMPLE_PROJECT], activeProject: SAMPLE_PROJECT };
 }
@@ -226,7 +319,7 @@ const initialSavedActiveId = typeof localStorage !== 'undefined' ? localStorage.
 export const useSopStore = create<SopState>((set, get) => ({
   projects: initialProjects,
   activeProject: initialActiveProject,
-  activeStepId: initialActiveProject?.steps[0]?.id || null,
+  activeStepId: initialActiveProject?.steps[0]?.id || (initialActiveProject ? 'cover' : null),
   activeView: (initialActiveProject && initialSavedActiveId) ? 'studio' : 'library',
   isCapturing: false,
   recentCapture: null,
@@ -242,17 +335,44 @@ export const useSopStore = create<SopState>((set, get) => ({
   loadProjects: async () => {
     try {
       let loadedProjects: SopProject[] = [];
+      let ipcLoaded = false;
       if (typeof window !== 'undefined' && window.electronAPI?.listProjects) {
-        const ipcProjects = await window.electronAPI.listProjects();
-        if (ipcProjects && ipcProjects.length > 0) {
-          loadedProjects = ipcProjects;
+        try {
+          const ipcProjects = await window.electronAPI.listProjects();
+          if (Array.isArray(ipcProjects)) {
+            ipcLoaded = true;
+            if (ipcProjects.length > 0) {
+              loadedProjects = ipcProjects;
+              try {
+                localStorage.setItem(STORAGE_INITIALIZED_KEY, 'true');
+              } catch {}
+            } else {
+              const isInitialized = typeof localStorage !== 'undefined' && localStorage.getItem(STORAGE_INITIALIZED_KEY) === 'true';
+              if (isInitialized) {
+                // User has run before and has legitimately empty project list on disk
+                loadedProjects = [];
+              } else {
+                // First-time launch in Electron: seed sample project to disk
+                loadedProjects = [SAMPLE_PROJECT];
+                try {
+                  localStorage.setItem(STORAGE_INITIALIZED_KEY, 'true');
+                } catch {}
+                if (window.electronAPI?.saveProject) {
+                  window.electronAPI.saveProject(SAMPLE_PROJECT).catch(console.error);
+                }
+              }
+            }
+          }
+        } catch (ipcErr) {
+          console.warn('IPC listProjects failed, using local store:', ipcErr);
         }
       }
-      if (loadedProjects.length === 0) {
+
+      if (!ipcLoaded) {
         const { projects } = loadInitialProjects();
         loadedProjects = projects;
       }
-      loadedProjects = loadedProjects.map(normalizeProjectSteps);
+      loadedProjects = deduplicateProjects(loadedProjects).map(normalizeProjectSteps);
       persistProjects(loadedProjects);
 
       const savedActiveId = typeof localStorage !== 'undefined' ? localStorage.getItem(ACTIVE_PROJECT_KEY) : null;
@@ -272,7 +392,7 @@ export const useSopStore = create<SopState>((set, get) => ({
         set({
           projects: loadedProjects,
           activeProject: active,
-          activeStepId: active.steps[0]?.id || null,
+          activeStepId: active.steps[0]?.id || 'cover',
           activeView: 'studio'
         });
       } else {
@@ -284,12 +404,13 @@ export const useSopStore = create<SopState>((set, get) => ({
         });
       }
     } catch (err) {
-      console.warn('Could not load projects via IPC, using local store:', err);
+      console.warn('Could not load projects, using local store:', err);
       const { projects, activeProject } = loadInitialProjects();
       set({
         projects,
         activeProject,
-        activeStepId: activeProject?.steps[0]?.id || null
+        activeStepId: activeProject?.steps[0]?.id || (activeProject ? 'cover' : null),
+        activeView: activeProject ? 'studio' : 'library'
       });
     }
   },
@@ -320,7 +441,7 @@ export const useSopStore = create<SopState>((set, get) => ({
     set({
       projects: updatedProjects,
       activeProject: newProject,
-      activeStepId: null,
+      activeStepId: 'cover',
       activeView: 'studio'
     });
 
@@ -328,6 +449,7 @@ export const useSopStore = create<SopState>((set, get) => ({
   },
 
   selectProject: (id: string | null) => {
+    flushPendingProjectBroadcast();
     if (!id) {
       try {
         localStorage.removeItem(ACTIVE_PROJECT_KEY);
@@ -353,7 +475,7 @@ export const useSopStore = create<SopState>((set, get) => ({
       }
       set({
         activeProject: normalized,
-        activeStepId: normalized.steps[0]?.id || null,
+        activeStepId: normalized.steps[0]?.id || 'cover',
         activeView: 'studio'
       });
     }
@@ -415,9 +537,23 @@ export const useSopStore = create<SopState>((set, get) => ({
   },
 
   deleteProject: async (id: string) => {
+    // If there is a pending debounced broadcast for the deleted project, cancel it immediately
+    if (pendingProjectBroadcast?.project.id === id) {
+      if (pendingProjectBroadcastTimer) {
+        clearTimeout(pendingProjectBroadcastTimer);
+        pendingProjectBroadcastTimer = null;
+      }
+      pendingProjectBroadcast = null;
+    } else {
+      flushPendingProjectBroadcast();
+    }
+
     const { projects, activeProject } = get();
     const updatedProjects = projects.filter((p) => p.id !== id);
     persistProjects(updatedProjects);
+    try {
+      localStorage.setItem(STORAGE_INITIALIZED_KEY, 'true');
+    } catch {}
 
     if (typeof window !== 'undefined' && window.electronAPI?.deleteProject) {
       try {
@@ -447,7 +583,7 @@ export const useSopStore = create<SopState>((set, get) => ({
     set({
       projects: updatedProjects,
       activeProject: nextActive,
-      activeStepId: nextActive ? nextActive.steps[0]?.id || null : null,
+      activeStepId: nextActive ? nextActive.steps[0]?.id || 'cover' : null,
       activeView: nextActive ? 'studio' : 'library'
     });
   },
@@ -592,7 +728,8 @@ export const useSopStore = create<SopState>((set, get) => ({
         ? {
             originalImagePath: normalizedImagePath,
             dimensions: { width: 1280, height: 720 },
-            annotations: []
+            annotations: [],
+            annotatedCachePath: undefined
           }
         : undefined
     };
@@ -693,7 +830,7 @@ export const useSopStore = create<SopState>((set, get) => ({
 
     let nextActiveStepId = activeStepId;
     if (activeStepId === stepId) {
-      nextActiveStepId = remainingSteps[stepIndex]?.id || remainingSteps[stepIndex - 1]?.id || remainingSteps[0]?.id || null;
+      nextActiveStepId = remainingSteps[stepIndex]?.id || remainingSteps[stepIndex - 1]?.id || remainingSteps[0]?.id || 'cover';
     }
 
     const updatedProject: SopProject = {
@@ -805,7 +942,8 @@ export const useSopStore = create<SopState>((set, get) => ({
           image: {
             originalImagePath: normalizedImagePath,
             dimensions: s.image?.dimensions || { width: 1280, height: 720 },
-            annotations: s.image?.annotations || []
+            annotations: s.image?.annotations || [],
+            annotatedCachePath: undefined
           }
         };
       }
@@ -839,7 +977,8 @@ export const useSopStore = create<SopState>((set, get) => ({
           ...s,
           image: {
             ...s.image,
-            annotations
+            annotations,
+            annotatedCachePath: undefined
           }
         };
       }

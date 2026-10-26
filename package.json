@@ -68,6 +68,7 @@
     "@modelcontextprotocol/sdk": "^1.32.1",
     "clsx": "^2.1.1",
     "jspdf": "^2.5.2",
+    "jszip": "^3.10.2",
     "konva": "^9.3.18",
     "lucide-react": "^0.460.0",
     "pptxgenjs": "^3.12.0",

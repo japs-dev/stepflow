@@ -228,11 +228,11 @@ export interface IpcBridge {
   ) => () => void;
   
   // Workspace & Shared Storage
-  getWorkspacePath: () => Promise<{ path: string; isCustom: boolean; defaultPath: string }>;
+  getWorkspacePath: () => Promise<{ path: string; isCustom: boolean; defaultPath: string; mcpServerPath?: string }>;
   changeWorkspacePath: () => Promise<{ success: boolean; canceled?: boolean; newPath?: string; error?: string }>;
   resetWorkspacePath: () => Promise<{ success: boolean; defaultPath: string }>;
   openWorkspaceFolder: () => Promise<void>;
-  onWorkspacePathChanged?: (callback: (data: { path: string; isCustom: boolean; defaultPath: string }) => void) => () => void;
+  onWorkspacePathChanged?: (callback: (data: { path: string; isCustom: boolean; defaultPath: string; mcpServerPath?: string }) => void) => () => void;
 
   // Portable Bundles (.stepflow archive)
   exportProjectBundle: (project: SopProject) => Promise<{ success: boolean; canceled?: boolean; filePath?: string; error?: string }>;

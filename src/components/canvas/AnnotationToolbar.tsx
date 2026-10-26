@@ -23,6 +23,7 @@ import {
   LoupeSettings,
   DEFAULT_LOUPE_SETTINGS
 } from '../../types/sop';
+import { isMacPlatform } from '../../utils/platform';
 
 export type ToolType =
   | 'select'
@@ -111,6 +112,9 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
 
   const effectiveTextSettings = textSettings || DEFAULT_TEXT_SETTINGS;
   const effectiveLoupeSettings = loupeSettings || DEFAULT_LOUPE_SETTINGS;
+  const isMac = isMacPlatform();
+  const undoShortcut = isMac ? 'Cmd+Z' : 'Ctrl+Z';
+  const redoShortcut = isMac ? 'Cmd+Shift+Z' : 'Ctrl+Y';
 
   // Click outside to close any open popups
   useEffect(() => {
@@ -770,7 +774,7 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
           type="button"
           onClick={onUndo}
           disabled={!canUndo}
-          title="Undo (Ctrl+Z / Cmd+Z)"
+          title={`Undo (${undoShortcut})`}
           className="flex items-center justify-center w-7 h-7 rounded-lg text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800/70 disabled:opacity-30 disabled:pointer-events-none transition-all"
         >
           <Undo2 className="w-3.5 h-3.5" />
@@ -779,7 +783,7 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
           type="button"
           onClick={onRedo}
           disabled={!canRedo}
-          title="Redo (Ctrl+Y / Cmd+Shift+Z)"
+          title={`Redo (${redoShortcut})`}
           className="flex items-center justify-center w-7 h-7 rounded-lg text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800/70 disabled:opacity-30 disabled:pointer-events-none transition-all"
         >
           <Redo2 className="w-3.5 h-3.5" />

@@ -3,6 +3,9 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    interpolate-size: allow-keywords;
+  }
   * {
     @apply border-zinc-200 dark:border-zinc-800;
   }
@@ -15,6 +18,12 @@
   }
   body.overlay-mode {
     background: transparent !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pill-expand-transition {
+    transition: none !important;
   }
 }
 

@@ -11,9 +11,9 @@ import {
   ExternalLink,
   Plus,
 } from 'lucide-react';
-import { useSopStore } from '../../store/useSopStore';
+import { useSopStore, normalizeImagePathForRenderer } from '../../store/useSopStore';
 import { ErrorFaqItem } from '../../types/sop';
-import { renderMarkdownBlocks } from '../../utils/markdownHelper';
+import { renderMarkdownBlocks, stripMarkdown } from '../../utils/markdownHelper';
 
 interface ErrorSearchModalProps {
   isOpen: boolean;
@@ -109,12 +109,6 @@ export const ErrorSearchModal: React.FC<ErrorSearchModalProps> = ({
     }
   };
 
-  const formatAssetUrl = (imagePath?: string) => {
-    if (!imagePath) return '';
-    if (imagePath.startsWith('data:') || imagePath.startsWith('http')) return imagePath;
-    return `stepflow-asset://${imagePath}`;
-  };
-
   if (!isOpen) return null;
 
   return (
@@ -202,7 +196,7 @@ export const ErrorSearchModal: React.FC<ErrorSearchModalProps> = ({
                     </div>
 
                     <p className="text-[11px] text-zinc-400 line-clamp-2">
-                      {item.solution.replace(/[*#_`]/g, '')}
+                      {stripMarkdown(item.solution)}
                     </p>
 
                     {item.tags && item.tags.length > 0 && (
@@ -317,11 +311,11 @@ export const ErrorSearchModal: React.FC<ErrorSearchModalProps> = ({
                     </span>
                     <div
                       className="relative rounded-lg overflow-hidden border border-zinc-700/80 max-h-36 bg-zinc-950 group cursor-pointer"
-                      onClick={() => setImagePreviewUrl(formatAssetUrl(activeItem.imagePath))}
+                      onClick={() => setImagePreviewUrl(normalizeImagePathForRenderer(activeItem.imagePath) || '')}
                       title="Click to expand screenshot"
                     >
                       <img
-                        src={formatAssetUrl(activeItem.imagePath)}
+                        src={normalizeImagePathForRenderer(activeItem.imagePath) || ''}
                         alt={activeItem.title}
                         className="w-full h-full object-contain max-h-36"
                       />
