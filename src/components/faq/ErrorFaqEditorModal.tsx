@@ -41,9 +41,11 @@ export const ErrorFaqEditorModal: React.FC<ErrorFaqEditorModalProps> = ({
   const [rawOcrText, setRawOcrText] = useState('');
   const [imagePath, setImagePath] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
+      setFormError(null);
       if (itemToEdit) {
         setTitle(itemToEdit.title || '');
         setErrorCode(itemToEdit.errorCode || '');
@@ -66,10 +68,11 @@ export const ErrorFaqEditorModal: React.FC<ErrorFaqEditorModalProps> = ({
 
   const handleSave = async () => {
     if (!title.trim()) {
-      alert('Please enter an error title');
+      setFormError('Please enter an error title');
       return;
     }
 
+    setFormError(null);
     setIsSaving(true);
     try {
       const tags = tagsInput
@@ -98,11 +101,11 @@ export const ErrorFaqEditorModal: React.FC<ErrorFaqEditorModalProps> = ({
         onSaved?.(item);
         onClose();
       } else {
-        alert('Failed to save error solution.');
+        setFormError('Failed to save error solution.');
       }
     } catch (err) {
       console.error('Error saving FAQ item:', err);
-      alert('An error occurred while saving.');
+      setFormError('An error occurred while saving.');
     } finally {
       setIsSaving(false);
     }
@@ -144,6 +147,11 @@ export const ErrorFaqEditorModal: React.FC<ErrorFaqEditorModalProps> = ({
 
         {/* Form Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          {formError && (
+            <div className="p-3 text-xs font-medium text-rose-400 bg-rose-950/40 border border-rose-800/60 rounded-lg">
+              {formError}
+            </div>
+          )}
           {/* Title & Code in 2 columns */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="sm:col-span-2">

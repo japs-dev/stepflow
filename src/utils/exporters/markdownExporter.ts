@@ -73,10 +73,18 @@ export function generateMarkdownString(project: SopProject): string {
   return lines.join('\n');
 }
 
-export function exportToMarkdown(project: SopProject): { success: boolean; markdown: string } {
+export async function exportToMarkdown(
+  project: SopProject
+): Promise<{ success: boolean; canceled?: boolean; filePath?: string; error?: string; markdown: string }> {
   const md = generateMarkdownString(project);
-  const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
   const safeName = getSafeFileName(project.name || 'sop-document', 'md');
+
+  if (typeof window !== 'undefined' && window.electronAPI?.exportMarkdown) {
+    const res = await window.electronAPI.exportMarkdown({ markdown: md, defaultName: safeName });
+    return { ...res, markdown: md };
+  }
+
+  const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
   downloadBlob(blob, safeName);
   return { success: true, markdown: md };
 }

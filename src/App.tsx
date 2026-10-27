@@ -3,6 +3,7 @@ import { useSopStore, normalizeProjectSteps } from './store/useSopStore';
 import { ProjectLibrary } from './components/dashboard/ProjectLibrary';
 import { StudioLayout } from './components/studio/StudioLayout';
 import { FloatingDot } from './components/overlay/FloatingDot';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 
 export const App: React.FC = () => {
   const {
@@ -88,6 +89,8 @@ export const App: React.FC = () => {
             const validStep = currentProject.steps.find((s) => s.id === targetId);
             if (validStep) {
               useSopStore.getState().setActiveStepId(validStep.id);
+            } else if (targetId === 'cover' || targetId === 'index') {
+              useSopStore.getState().setActiveStepId(targetId);
             } else if (currentProject.steps.length > 0) {
               useSopStore.getState().setActiveStepId(currentProject.steps[currentProject.steps.length - 1].id);
             }
@@ -174,11 +177,19 @@ export const App: React.FC = () => {
   // Standard Studio / Library view mode
   return (
     <div className="h-screen w-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans overflow-hidden">
-      {activeView === 'studio' && activeProject ? (
-        <StudioLayout />
-      ) : (
-        <ProjectLibrary />
-      )}
+      <ErrorBoundary
+        fallbackTitle="StepFlow encountered an unexpected error"
+        onReset={() => {
+          useSopStore.getState().setActiveView('library');
+          useSopStore.getState().selectProject(null);
+        }}
+      >
+        {activeView === 'studio' && activeProject ? (
+          <StudioLayout />
+        ) : (
+          <ProjectLibrary />
+        )}
+      </ErrorBoundary>
     </div>
   );
 };

@@ -303,81 +303,31 @@ export async function buildPptxPresentation(project: SopProject): Promise<PptxGe
   // 2. TABLE OF CONTENTS / AGENDA SLIDE
   // ==========================================
   if (hasToc) {
-    const tocSlide = pptx.addSlide({ masterName: 'MASTER_STEPFLOW' });
+    const ITEMS_PER_SLIDE = 14;
+    const totalTocPages = Math.max(1, Math.ceil(sortedSteps.length / ITEMS_PER_SLIDE));
 
-    // Header Pill
-    tocSlide.addShape('roundRect', {
-      x: 0.8,
-      y: 0.45,
-      w: 2.2,
-      h: 0.28,
-      fill: { color: primaryHex },
-      rectRadius: 0.05,
-    });
-    tocSlide.addText('TABLE OF CONTENTS', {
-      x: 0.8,
-      y: 0.45,
-      w: 2.2,
-      h: 0.28,
-      fontSize: 8.5,
-      bold: true,
-      color: 'FFFFFF',
-      align: 'center',
-      valign: 'middle',
-      fontFace,
-    });
+    for (let page = 0; page < totalTocPages; page++) {
+      const pageSteps = sortedSteps.slice(page * ITEMS_PER_SLIDE, (page + 1) * ITEMS_PER_SLIDE);
+      const tocSlide = pptx.addSlide({ masterName: 'MASTER_STEPFLOW' });
 
-    tocSlide.addText('Procedure Directory', {
-      x: 0.8,
-      y: 0.82,
-      w: 8.4,
-      h: 0.4,
-      fontSize: 20,
-      bold: true,
-      color: primaryHex,
-      fontFace,
-      valign: 'top',
-    });
-
-    // Render 2 columns of step cards
-    const half = Math.ceil(sortedSteps.length / 2);
-    const colWidth = 4.05;
-    const gap = 0.3;
-
-    sortedSteps.forEach((step, idx) => {
-      const colIndex = idx < half ? 0 : 1;
-      const rowIndex = idx < half ? idx : idx - half;
-      if (rowIndex >= 7) return; // Limit to 7 per column for clean layout
-
-      const itemX = 0.8 + colIndex * (colWidth + gap);
-      const itemY = 1.35 + rowIndex * 0.52;
-
-      // Row background
+      // Header Pill
       tocSlide.addShape('roundRect', {
-        x: itemX,
-        y: itemY,
-        w: colWidth,
-        h: 0.44,
-        fill: { color: 'F8FAFC' },
-        line: { color: 'E2E8F0', width: 0.75 },
-        rectRadius: 0.05,
-      });
-
-      // Step badge
-      tocSlide.addShape('roundRect', {
-        x: itemX + 0.1,
-        y: itemY + 0.08,
-        w: 0.68,
+        x: 0.8,
+        y: 0.45,
+        w: 2.5,
         h: 0.28,
         fill: { color: primaryHex },
-        rectRadius: 0.04,
+        rectRadius: 0.05,
       });
-      tocSlide.addText(`STEP ${String(step.order).padStart(2, '0')}`, {
-        x: itemX + 0.1,
-        y: itemY + 0.08,
-        w: 0.68,
+      const headerTitle = totalTocPages > 1
+        ? `TABLE OF CONTENTS (${page + 1}/${totalTocPages})`
+        : 'TABLE OF CONTENTS';
+      tocSlide.addText(headerTitle, {
+        x: 0.8,
+        y: 0.45,
+        w: 2.5,
         h: 0.28,
-        fontSize: 7.5,
+        fontSize: 8,
         bold: true,
         color: 'FFFFFF',
         align: 'center',
@@ -385,33 +335,91 @@ export async function buildPptxPresentation(project: SopProject): Promise<PptxGe
         fontFace,
       });
 
-      // Step title
-      tocSlide.addText(step.title, {
-        x: itemX + 0.88,
-        y: itemY + 0.08,
-        w: colWidth - 1.6,
-        h: 0.28,
-        fontSize: 9.5,
+      tocSlide.addText('Procedure Directory', {
+        x: 0.8,
+        y: 0.82,
+        w: 8.4,
+        h: 0.4,
+        fontSize: 20,
         bold: true,
-        color: '1E293B',
+        color: primaryHex,
         fontFace,
-        valign: 'middle',
+        valign: 'top',
       });
 
-      // Step type tag
-      const typeLabel = step.type === 'screenshot' ? 'Visual' : 'Check';
-      tocSlide.addText(typeLabel, {
-        x: itemX + colWidth - 0.7,
-        y: itemY + 0.08,
-        w: 0.6,
-        h: 0.28,
-        fontSize: 8,
-        color: '64748B',
-        align: 'right',
-        fontFace,
-        valign: 'middle',
+      // Render 2 columns of step cards
+      const half = Math.ceil(pageSteps.length / 2);
+      const colWidth = 4.05;
+      const gap = 0.3;
+
+      pageSteps.forEach((step, idx) => {
+        const colIndex = idx < half ? 0 : 1;
+        const rowIndex = idx < half ? idx : idx - half;
+
+        const itemX = 0.8 + colIndex * (colWidth + gap);
+        const itemY = 1.35 + rowIndex * 0.52;
+
+        // Row background
+        tocSlide.addShape('roundRect', {
+          x: itemX,
+          y: itemY,
+          w: colWidth,
+          h: 0.44,
+          fill: { color: 'F8FAFC' },
+          line: { color: 'E2E8F0', width: 0.75 },
+          rectRadius: 0.05,
+        });
+
+        // Step badge
+        tocSlide.addShape('roundRect', {
+          x: itemX + 0.1,
+          y: itemY + 0.08,
+          w: 0.68,
+          h: 0.28,
+          fill: { color: primaryHex },
+          rectRadius: 0.04,
+        });
+        tocSlide.addText(`STEP ${String(step.order).padStart(2, '0')}`, {
+          x: itemX + 0.1,
+          y: itemY + 0.08,
+          w: 0.68,
+          h: 0.28,
+          fontSize: 7.5,
+          bold: true,
+          color: 'FFFFFF',
+          align: 'center',
+          valign: 'middle',
+          fontFace,
+        });
+
+        // Step title
+        tocSlide.addText(step.title, {
+          x: itemX + 0.88,
+          y: itemY + 0.08,
+          w: colWidth - 1.6,
+          h: 0.28,
+          fontSize: 9.5,
+          bold: true,
+          color: '1E293B',
+          fontFace,
+          valign: 'middle',
+        });
+
+        // Step type tag
+        const typeLabel = step.type === 'screenshot' ? 'Visual' : 'Check';
+        tocSlide.addText(typeLabel, {
+          x: itemX + colWidth - 0.7,
+          y: itemY + 0.08,
+          w: 0.6,
+          h: 0.28,
+          fontSize: 8,
+          color: '64748B',
+          align: 'right',
+          fontFace,
+          valign: 'middle',
+        });
       });
-    });
+    }
   }
 
   // ==========================================

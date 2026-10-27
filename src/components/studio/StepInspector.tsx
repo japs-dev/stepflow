@@ -19,6 +19,7 @@ import { useSopStore } from '../../store/useSopStore';
 import { CalloutType, DEFAULT_COVER_PAGE_SETTINGS } from '../../types/sop';
 import { RichInstructionsEditor } from './RichInstructionsEditor';
 import { getCmdLabel } from '../../utils/platform';
+import { DEFAULT_THEME } from '../../store/sampleData';
 
 interface StepInspectorProps {
   onTriggerCapture?: (mode?: 'fullscreen' | 'selection') => void;
@@ -28,7 +29,7 @@ interface StepInspectorProps {
 
 export const StepInspector: React.FC<StepInspectorProps> = ({
   onTriggerCapture,
-  width = 288,
+  width = 320,
   onToggleCollapse
 }) => {
   const {
@@ -309,7 +310,7 @@ export const StepInspector: React.FC<StepInspectorProps> = ({
     );
   }
 
-  const beautify = activeProject.theme.beautifySettings;
+  const beautify = activeProject.theme?.beautifySettings || DEFAULT_THEME.beautifySettings;
 
   const handleStartRetake = async (mode: 'fullscreen' | 'selection' = 'fullscreen', e?: React.MouseEvent) => {
     if (!currentStep) return;
@@ -411,7 +412,8 @@ export const StepInspector: React.FC<StepInspectorProps> = ({
           value={currentStep.description}
           onChange={(newDesc) => updateStep(currentStep.id, { description: newDesc })}
           placeholder="Provide context or guidance for this step..."
-          rows={4}
+          defaultHeight={190}
+          stepTitle={`Step ${currentStep.order}: ${currentStep.title || 'Untitled Step'}`}
         />
 
         {/* Callout Badge Selector (Icon-Based with Clear Tooltips) */}

@@ -105,14 +105,17 @@ export async function buildPdfDocument(project: SopProject): Promise<jsPDF> {
         const overlayOpacity = cover.backgroundOverlayOpacity ?? 0.45;
         if (overlayOpacity > 0) {
           try {
-            // @ts-ignore
-            doc.saveGraphicsState();
-            // @ts-ignore
-            doc.setGState(new doc.GState({ opacity: overlayOpacity }));
-            doc.setFillColor(0, 0, 0);
-            doc.rect(0, 0, pageWidth, pageHeight, 'F');
-            // @ts-ignore
-            doc.restoreGraphicsState();
+            const anyDoc = doc as any;
+            if (typeof anyDoc.saveGraphicsState === 'function') {
+              anyDoc.saveGraphicsState();
+              anyDoc.setGState(new anyDoc.GState({ opacity: overlayOpacity }));
+              doc.setFillColor(0, 0, 0);
+              doc.rect(0, 0, pageWidth, pageHeight, 'F');
+              anyDoc.restoreGraphicsState();
+            } else {
+              doc.setFillColor(15, 23, 42);
+              doc.rect(0, 0, pageWidth, pageHeight, 'F');
+            }
           } catch {
             doc.setFillColor(15, 23, 42);
             doc.rect(0, 0, pageWidth, pageHeight, 'F');
@@ -532,68 +535,125 @@ export async function buildPdfDocument(project: SopProject): Promise<jsPDF> {
     tocY += 20;
 
     // Table of contents entries
-    const rowHeight = 28;
-    for (const step of sortedSteps) {
-      if (tocY + rowHeight > bottomThreshold - 10) {
-        // Fits comfortably on single page overview
-        break;
-      }
+    const useTwoColumns = sortedSteps.length > 18;
+    if (useTwoColumns) {
+      const colGap = 16;
+      const colWidth = (contentWidth - colGap) / 2;
+      const half = Math.ceil(sortedSteps.length / 2);
+      const rowHeight = 22;
 
-      // Step Number Pill
-      const numStr = String(step.order).padStart(2, '0');
-      const numPillW = 32;
-      const numPillH = 18;
-      doc.setFillColor(241, 245, 249);
-      doc.roundedRect(margin, tocY, numPillW, numPillH, 4, 4, 'F');
+      sortedSteps.forEach((step, idx) => {
+        const colIndex = idx < half ? 0 : 1;
+        const rowIndex = idx < half ? idx : idx - half;
+        const colX = margin + colIndex * (colWidth + colGap);
+        const itemY = tocY + rowIndex * rowHeight;
 
-      doc.setFontSize(8.5);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(...primaryRgb);
-      const numW = doc.getTextWidth(numStr);
-      doc.text(numStr, margin + (numPillW - numW) / 2, tocY + 12.5);
+        if (itemY + rowHeight > bottomThreshold) return;
 
-      // Step Title
-      doc.setFontSize(9.5);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(15, 23, 42);
-      const titleStartX = margin + numPillW + 12;
-      const maxTitleWidth = 330;
-      let titleStr = step.title;
-      while (doc.getTextWidth(titleStr) > maxTitleWidth && titleStr.length > 5) {
-        titleStr = titleStr.slice(0, -4) + '...';
-      }
-      doc.text(titleStr, titleStartX, tocY + 12.5);
+        // Step number pill
+        const numStr = String(step.order).padStart(2, '0');
+        const numPillW = 24;
+        const numPillH = 16;
+        doc.setFillColor(241, 245, 249);
+        doc.roundedRect(colX, itemY, numPillW, numPillH, 3, 3, 'F');
 
-      // Page Number
-      const targetPage = stepPageMap[step.id] || (hasToc ? 3 : 2);
-      const pageNumStr = `Page ${targetPage}`;
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(...accentRgb);
-      const pageNumWidth = doc.getTextWidth(pageNumStr);
-      const pageNumX = pageWidth - margin - pageNumWidth;
-      doc.text(pageNumStr, pageNumX, tocY + 12.5);
+        doc.setFontSize(7.5);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(...primaryRgb);
+        const numW = doc.getTextWidth(numStr);
+        doc.text(numStr, colX + (numPillW - numW) / 2, itemY + 11);
 
-      // Dotted Leader Line
-      const dotStartX = titleStartX + doc.getTextWidth(titleStr) + 8;
-      const dotEndX = pageNumX - 10;
-      if (dotEndX > dotStartX + 12) {
-        doc.setFontSize(8);
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(203, 213, 225);
-        let curDotX = dotStartX;
-        while (curDotX < dotEndX) {
-          doc.text('.', curDotX, tocY + 11.5);
-          curDotX += 5;
+        // Step Title
+        doc.setFontSize(8.5);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(15, 23, 42);
+        const titleStartX = colX + numPillW + 8;
+        const maxTitleWidth = colWidth - numPillW - 55;
+        let titleStr = step.title;
+        while (doc.getTextWidth(titleStr) > maxTitleWidth && titleStr.length > 5) {
+          titleStr = titleStr.slice(0, -4) + '...';
         }
+        doc.text(titleStr, titleStartX, itemY + 11);
+
+        // Page Number
+        const targetPage = stepPageMap[step.id] || (hasToc ? 3 : 2);
+        const pageNumStr = `p. ${targetPage}`;
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(...accentRgb);
+        const pageNumWidth = doc.getTextWidth(pageNumStr);
+        const pageNumX = colX + colWidth - pageNumWidth;
+        doc.text(pageNumStr, pageNumX, itemY + 11);
+
+        // Divider Line
+        doc.setDrawColor(241, 245, 249);
+        doc.setLineWidth(0.5);
+        doc.line(colX, itemY + rowHeight - 2, colX + colWidth, itemY + rowHeight - 2);
+      });
+    } else {
+      const rowHeight = 28;
+      for (const step of sortedSteps) {
+        if (tocY + rowHeight > bottomThreshold - 10) {
+          // Fits comfortably on single page overview
+          break;
+        }
+
+        // Step Number Pill
+        const numStr = String(step.order).padStart(2, '0');
+        const numPillW = 32;
+        const numPillH = 18;
+        doc.setFillColor(241, 245, 249);
+        doc.roundedRect(margin, tocY, numPillW, numPillH, 4, 4, 'F');
+
+        doc.setFontSize(8.5);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(...primaryRgb);
+        const numW = doc.getTextWidth(numStr);
+        doc.text(numStr, margin + (numPillW - numW) / 2, tocY + 12.5);
+
+        // Step Title
+        doc.setFontSize(9.5);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(15, 23, 42);
+        const titleStartX = margin + numPillW + 12;
+        const maxTitleWidth = 330;
+        let titleStr = step.title;
+        while (doc.getTextWidth(titleStr) > maxTitleWidth && titleStr.length > 5) {
+          titleStr = titleStr.slice(0, -4) + '...';
+        }
+        doc.text(titleStr, titleStartX, tocY + 12.5);
+
+        // Page Number
+        const targetPage = stepPageMap[step.id] || (hasToc ? 3 : 2);
+        const pageNumStr = `Page ${targetPage}`;
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(...accentRgb);
+        const pageNumWidth = doc.getTextWidth(pageNumStr);
+        const pageNumX = pageWidth - margin - pageNumWidth;
+        doc.text(pageNumStr, pageNumX, tocY + 12.5);
+
+        // Dotted Leader Line
+        const dotStartX = titleStartX + doc.getTextWidth(titleStr) + 8;
+        const dotEndX = pageNumX - 10;
+        if (dotEndX > dotStartX + 12) {
+          doc.setFontSize(8);
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(203, 213, 225);
+          let curDotX = dotStartX;
+          while (curDotX < dotEndX) {
+            doc.text('.', curDotX, tocY + 11.5);
+            curDotX += 5;
+          }
+        }
+
+        // Divider Line
+        doc.setDrawColor(241, 245, 249);
+        doc.setLineWidth(0.5);
+        doc.line(margin, tocY + rowHeight - 4, pageWidth - margin, tocY + rowHeight - 4);
+
+        tocY += rowHeight;
       }
-
-      // Divider Line
-      doc.setDrawColor(241, 245, 249);
-      doc.setLineWidth(0.5);
-      doc.line(margin, tocY + rowHeight - 4, pageWidth - margin, tocY + rowHeight - 4);
-
-      tocY += rowHeight;
     }
   }
 

@@ -866,12 +866,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new McpError(ErrorCode.InvalidRequest, `SOP "${sopId}" not found.`);
         }
 
+        const titleInput = typeof args.title === 'string' ? args.title.trim() : '';
+        const stepType = (args.type as 'screenshot' | 'text_only') || 'screenshot';
+        const fallbackTitle =
+          stepType === 'text_only'
+            ? `Step ${project.steps.length + 1}: Important Notes`
+            : `Step ${project.steps.length + 1}: Action`;
+
         const newStep: SopStep = {
           id: `step-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           order: project.steps.length + 1,
-          type: (args.type as 'screenshot' | 'text_only') || 'screenshot',
-          title: (args.title as string).trim(),
-          description: args.description as string,
+          type: stepType,
+          title: titleInput || fallbackTitle,
+          description: typeof args.description === 'string' ? args.description : '',
           callout: args.callout
             ? {
                 type: ((args.callout as any).type as CalloutType) || 'info',

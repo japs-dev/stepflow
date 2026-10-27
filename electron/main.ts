@@ -71,12 +71,10 @@ function appendRuntimeLog(message: string, error?: unknown): void {
 }
 
 if (process.platform === 'win32') {
-  // Defensive startup flags for environments where Chromium renderer bootstrap fails.
+  // Defensive startup flags for environments where hardware acceleration fails.
   app.disableHardwareAcceleration();
   app.commandLine.appendSwitch('disable-gpu');
   app.commandLine.appendSwitch('disable-software-rasterizer');
-  app.commandLine.appendSwitch('no-sandbox');
-  app.commandLine.appendSwitch('disable-features', 'RendererCodeIntegrity');
 }
 
 // Determine storage paths with configurable workspace directory support
@@ -298,20 +296,11 @@ interface SelectionRect {
   height: number;
 }
 
+const enableRendererSandbox = process.platform !== 'win32';
+
 function requestSelectionRect(display: Electron.Display): Promise<SelectionRect | null> {
   return new Promise((resolve) => {
-    const requestId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const submitChannel = `selection-rect-submit-${requestId}`;
-    const cancelChannel = `selection-rect-cancel-${requestId}`;
-
     let resolved = false;
-    const finish = (value: SelectionRect | null) => {
-      if (resolved) return;
-      resolved = true;
-      ipcMain.removeAllListeners(submitChannel);
-      ipcMain.removeAllListeners(cancelChannel);
-      resolve(value);
-    };
 
     const selectorWindow = new BrowserWindow({
       x: display.bounds.x,
@@ -328,9 +317,10 @@ function requestSelectionRect(display: Electron.Display): Promise<SelectionRect 
       show: false,
       backgroundColor: '#00000001',
       webPreferences: {
-        nodeIntegration: true,
-        contextIsolation: false,
-        sandbox: false,
+        preload: getPreloadPath(),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: enableRendererSandbox,
       },
     });
 
@@ -342,15 +332,30 @@ function requestSelectionRect(display: Electron.Display): Promise<SelectionRect 
       } catch {}
     };
 
-    ipcMain.once(submitChannel, (_event, rect: SelectionRect) => {
-      finish(rect);
-      cleanupAndClose();
-    });
+    const finish = (value: SelectionRect | null) => {
+      if (resolved) return;
+      resolved = true;
+      ipcMain.removeListener('selection-rect-submit', onSubmit);
+      ipcMain.removeListener('selection-rect-cancel', onCancel);
+      resolve(value);
+    };
 
-    ipcMain.once(cancelChannel, () => {
-      finish(null);
-      cleanupAndClose();
-    });
+    const onSubmit = (event: Electron.IpcMainEvent, rect: SelectionRect) => {
+      if (event.sender === selectorWindow.webContents) {
+        finish(rect);
+        cleanupAndClose();
+      }
+    };
+
+    const onCancel = (event: Electron.IpcMainEvent) => {
+      if (event.sender === selectorWindow.webContents) {
+        finish(null);
+        cleanupAndClose();
+      }
+    };
+
+    ipcMain.on('selection-rect-submit', onSubmit);
+    ipcMain.on('selection-rect-cancel', onCancel);
 
     selectorWindow.on('closed', () => {
       finish(null);
@@ -398,9 +403,7 @@ function requestSelectionRect(display: Electron.Display): Promise<SelectionRect 
     <div id="hint">Drag to capture a region. Press Esc to cancel.</div>
     <div id="selection"></div>
     <script>
-      const { ipcRenderer } = require('electron');
-      const submitChannel = ${JSON.stringify(submitChannel)};
-      const cancelChannel = ${JSON.stringify(cancelChannel)};
+      const api = window.electronAPI;
       const selectionEl = document.getElementById('selection');
       let dragging = false;
       let startX = 0;
@@ -449,21 +452,21 @@ function requestSelectionRect(display: Electron.Display): Promise<SelectionRect 
         currentY = e.clientY;
         const rect = rectFromPoints();
         if (rect.width < 4 || rect.height < 4) {
-          ipcRenderer.send(cancelChannel);
+          api && api.cancelSelectionRect && api.cancelSelectionRect();
           return;
         }
-        ipcRenderer.send(submitChannel, rect);
+        api && api.submitSelectionRect && api.submitSelectionRect(rect);
       });
 
       window.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
-          ipcRenderer.send(cancelChannel);
+          api && api.cancelSelectionRect && api.cancelSelectionRect();
         }
       });
 
       window.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        ipcRenderer.send(cancelChannel);
+        api && api.cancelSelectionRect && api.cancelSelectionRect();
       });
     </script>
   </body>
@@ -549,9 +552,6 @@ function createStudioWindow(): BrowserWindow {
     studioWindow.focus();
     return studioWindow;
   }
-
-  // Some Windows environments block sandboxed renderer startup for unsigned internal apps.
-  const enableRendererSandbox = process.platform !== 'win32';
 
   const showImmediately = process.platform === 'win32';
 
@@ -1139,7 +1139,6 @@ async function showOpenDialogHelper(options: Electron.OpenDialogOptions): Promis
 
 let ocrWorkerInstance: any = null;
 let ocrWorkerInitPromise: Promise<any> | null = null;
-let currentOcrStatusReporter: ((status: string, progress: number) => void) | null = null;
 
 function emitOcrStatus(status: {
   phase: 'preparing' | 'initializing' | 'recognizing' | 'matching' | 'complete' | 'error';
@@ -1169,7 +1168,31 @@ async function getOcrWorker(): Promise<any> {
   ocrWorkerInitPromise = (async () => {
     appendRuntimeLog('[OCR] Initializing bundled Tesseract worker...');
     const { createWorker } = await import('tesseract.js');
-    const worker = await createWorker('eng');
+
+    const possibleDirs = [
+      app.isPackaged ? process.resourcesPath : '',
+      app.getAppPath(),
+      process.cwd(),
+      __dirname,
+      path.join(__dirname, '..'),
+    ].filter(Boolean);
+
+    let localTrainedDataDir: string | undefined;
+    for (const dir of possibleDirs) {
+      if (fs.existsSync(path.join(dir, 'eng.traineddata'))) {
+        localTrainedDataDir = dir;
+        break;
+      }
+    }
+
+    const workerOptions: Record<string, any> = {};
+    if (localTrainedDataDir) {
+      workerOptions.langPath = localTrainedDataDir;
+      workerOptions.gzip = false;
+      appendRuntimeLog(`[OCR] Using offline traineddata from: ${localTrainedDataDir}`);
+    }
+
+    const worker = await createWorker('eng', 1, workerOptions);
     ocrWorkerInstance = worker;
     appendRuntimeLog('[OCR] Tesseract worker ready');
     return worker;
@@ -2099,6 +2122,36 @@ function registerIpcHandlers(): void {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
   });
+
+  // Export Markdown Native Save
+  ipcMain.handle(
+    'export-markdown',
+    async (
+      _event,
+      payload: { markdown: string; defaultName?: string }
+    ): Promise<{ success: boolean; canceled?: boolean; filePath?: string; error?: string }> => {
+      try {
+        if (!payload || !payload.markdown) {
+          return { success: false, error: 'No markdown content provided' };
+        }
+        const defaultName = payload.defaultName || 'procedure.md';
+        const { canceled, filePath } = await showSaveDialogHelper({
+          title: 'Export Markdown Document',
+          defaultPath: defaultName,
+          filters: [{ name: 'Markdown Document (*.md)', extensions: ['md'] }],
+        });
+
+        if (canceled || !filePath) {
+          return { success: false, canceled: true, error: 'Export canceled by user' };
+        }
+
+        await fs.promises.writeFile(filePath, payload.markdown, 'utf-8');
+        return { success: true, filePath };
+      } catch (err: any) {
+        return { success: false, error: err?.message || 'Failed to export markdown' };
+      }
+    }
+  );
 
   // Portable Bundles (.stepflow export & import)
   ipcMain.handle(

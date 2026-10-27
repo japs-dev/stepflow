@@ -16,6 +16,14 @@ const electronAPI: IpcBridge = {
     };
   },
 
+  // Selection Rect
+  submitSelectionRect: (rect: { x: number; y: number; width: number; height: number }): void => {
+    ipcRenderer.send('selection-rect-submit', rect);
+  },
+  cancelSelectionRect: (): void => {
+    ipcRenderer.send('selection-rect-cancel');
+  },
+
   // Window Management
   minimizeToOverlay: (anchor?: { x: number; y: number }): void => {
     ipcRenderer.send('minimize-to-overlay', anchor);
@@ -174,6 +182,9 @@ const electronAPI: IpcBridge = {
   },
   exportHtml: (project: SopProject, htmlContent?: string): Promise<{ success: boolean; filePath?: string; error?: string }> => {
     return ipcRenderer.invoke('export-html', project, htmlContent);
+  },
+  exportMarkdown: (payload: { markdown: string; defaultName?: string }): Promise<{ success: boolean; canceled?: boolean; filePath?: string; error?: string }> => {
+    return ipcRenderer.invoke('export-markdown', payload);
   },
 };
 

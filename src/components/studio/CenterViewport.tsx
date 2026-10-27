@@ -6,7 +6,6 @@ import {
   Info,
   AlertTriangle,
   Lightbulb,
-  FileText,
   PanelLeftOpen,
   PanelRightOpen,
   Minus,
@@ -30,6 +29,7 @@ import { TableOfContentsStudio } from './TableOfContentsStudio';
 import { RichInstructionsEditor } from './RichInstructionsEditor';
 import { renderMarkdownBlocks } from '../../utils/markdownHelper';
 import { getCmdLabel } from '../../utils/platform';
+import { DEFAULT_THEME } from '../../store/sampleData';
 
 interface CenterViewportProps {
   onTriggerCapture?: (mode?: 'fullscreen' | 'selection') => void;
@@ -390,54 +390,6 @@ export const CenterViewport: React.FC<CenterViewportProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedAnnotationId, handleUndo, handleRedo, handleDeleteSelected, handleZoomIn, handleZoomOut, handleZoomFit, activeTool]);
 
-  if (!activeProject || !currentStep) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-zinc-100/60 dark:bg-zinc-950/60 p-8 text-center select-none">
-        <div className="w-12 h-12 rounded-full bg-zinc-200 dark:bg-zinc-800 flex items-center justify-center text-zinc-400 mb-3">
-          <FileText className="w-6 h-6" />
-        </div>
-        <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-          No step selected
-        </h3>
-        <p className="text-xs text-zinc-400 mt-1 max-w-xs">
-          Select a step from the left outline or add a new screenshot or text step to get started.
-        </p>
-      </div>
-    );
-  }
-
-  const beautify = activeProject.theme.beautifySettings;
-
-  // Calculate next badge number
-  const existingBadges = annotations
-    .filter((a) => a.type === 'badge')
-    .map((a) => a.badgeNumber || 0);
-  const nextBadgeNumber =
-    existingBadges.length > 0 ? Math.max(...existingBadges) + 1 : 1;
-
-  const handleUploadImage = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        const result = event.target?.result as string;
-        if (result && activeStepId) {
-          let finalPath = result;
-          if (typeof window !== 'undefined' && window.electronAPI?.importPastedImage) {
-            try {
-              finalPath = await window.electronAPI.importPastedImage(result);
-            } catch (err) {
-              console.warn('Failed to save uploaded image to assets folder:', err);
-            }
-          }
-          retakeStepImage(activeStepId, finalPath);
-        }
-      };
-      reader.readAsDataURL(file);
-      e.target.value = '';
-    }
-  };
-
   // Support pasting image directly from clipboard into the active step
   useEffect(() => {
     const handlePaste = async (e: ClipboardEvent) => {
@@ -617,6 +569,40 @@ export const CenterViewport: React.FC<CenterViewportProps> = ({
       </div>
     );
   }
+
+  if (!activeProject) return null;
+
+  const beautify = activeProject.theme?.beautifySettings || DEFAULT_THEME.beautifySettings;
+
+  // Calculate next badge number
+  const existingBadges = annotations
+    .filter((a) => a.type === 'badge')
+    .map((a) => a.badgeNumber || 0);
+  const nextBadgeNumber =
+    existingBadges.length > 0 ? Math.max(...existingBadges) + 1 : 1;
+
+  const handleUploadImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        const result = event.target?.result as string;
+        if (result && activeStepId) {
+          let finalPath = result;
+          if (typeof window !== 'undefined' && window.electronAPI?.importPastedImage) {
+            try {
+              finalPath = await window.electronAPI.importPastedImage(result);
+            } catch (err) {
+              console.warn('Failed to save uploaded image to assets folder:', err);
+            }
+          }
+          retakeStepImage(activeStepId, finalPath);
+        }
+      };
+      reader.readAsDataURL(file);
+      e.target.value = '';
+    }
+  };
 
   return (
     <div className="flex-1 flex flex-col bg-zinc-100/70 dark:bg-zinc-950/80 overflow-hidden relative">
@@ -962,6 +948,7 @@ export const CenterViewport: React.FC<CenterViewportProps> = ({
                     placeholder="Write detailed instructions using standard Markdown (# headers, - lists, > blockquotes)..."
                     minHeight="260px"
                     label="Markdown Instructions & Documentation"
+                    stepTitle={`Step ${currentStep.order}: ${currentStep.title || 'Untitled Step'}`}
                   />
                 </div>
               </div>

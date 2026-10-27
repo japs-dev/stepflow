@@ -70,6 +70,7 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
   const [newErrorCode, setNewErrorCode] = useState('');
   const [newErrorSolution, setNewErrorSolution] = useState('');
   const [newErrorTags, setNewErrorTags] = useState('');
+  const [overlayError, setOverlayError] = useState<string | null>(null);
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -436,7 +437,8 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
 
     const file = files[0];
     if (!file.type.startsWith('image/')) {
-      alert('Please drop an image file (PNG, JPG, WebP)');
+      setOverlayError('Please drop an image file (PNG, JPG, WebP)');
+      setTimeout(() => setOverlayError(null), 3000);
       return;
     }
 
@@ -550,7 +552,8 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
 
   const handleSaveNewErrorSolution = async () => {
     if (!newErrorTitle.trim()) {
-      alert('Please enter an error title');
+      setOverlayError('Please enter an error title');
+      setTimeout(() => setOverlayError(null), 3000);
       return;
     }
 
@@ -582,7 +585,8 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
       transitionToState('collapsed');
       setOcrResult(null);
     } else {
-      alert('Failed to save error solution.');
+      setOverlayError('Failed to save error solution.');
+      setTimeout(() => setOverlayError(null), 3000);
     }
   };
 
@@ -931,6 +935,12 @@ export const FloatingDot: React.FC<FloatingDotProps> = ({ onTriggerCapture }) =>
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
+
+          {overlayError && (
+            <div className="px-2.5 py-1 text-[11px] font-medium text-rose-400 bg-rose-950/40 border border-rose-800/60 rounded-lg">
+              {overlayError}
+            </div>
+          )}
 
           {/* Form */}
           <div className="space-y-2">

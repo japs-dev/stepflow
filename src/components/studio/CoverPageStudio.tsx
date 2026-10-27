@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   FileText,
   Palette,
@@ -68,6 +68,7 @@ export const CoverPageStudio: React.FC = () => {
   const { activeProject, updateCoverPageSettings, updateProjectDetails, setActiveStepId } =
     useSopStore();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   if (!activeProject) return null;
 
@@ -97,7 +98,8 @@ export const CoverPageStudio: React.FC = () => {
     if (!file) return;
 
     if (file.size > 5 * 1024 * 1024) {
-      alert('Cover image must be smaller than 5 MB.');
+      setUploadError('Cover image must be smaller than 5 MB.');
+      setTimeout(() => setUploadError(null), 4000);
       e.target.value = '';
       return;
     }
@@ -125,13 +127,20 @@ export const CoverPageStudio: React.FC = () => {
     e.target.value = '';
   };
 
-  const formattedDate = new Date(
-    activeProject.updatedAt || activeProject.createdAt || Date.now()
-  ).toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  });
+  const formattedDate = (() => {
+    try {
+      const raw = activeProject.updatedAt || activeProject.createdAt || Date.now();
+      const d = new Date(raw);
+      if (isNaN(d.getTime())) return new Date().toLocaleDateString();
+      return d.toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+    } catch {
+      return new Date().toLocaleDateString();
+    }
+  })();
 
   const isHexColorLight = (hex?: string): boolean => {
     if (!hex || !hex.startsWith('#')) return false;
@@ -542,6 +551,11 @@ export const CoverPageStudio: React.FC = () => {
             {/* Custom Background Image Uploader */}
             {cover.backgroundType === 'image' && (
               <div className="flex flex-col gap-3 pt-1">
+                {uploadError && (
+                  <div className="text-xs text-rose-500 font-medium px-2.5 py-1.5 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 rounded-md">
+                    {uploadError}
+                  </div>
+                )}
                 <input
                   ref={fileInputRef}
                   type="file"

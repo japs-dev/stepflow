@@ -76,10 +76,13 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
     }
   };
 
+  const currentStep = activeProject?.steps.find((s) => s.id === activeStepId);
+  const canRetake = Boolean(currentStep && currentStep.type === 'screenshot');
+
   const handleRetakeActive = (mode: 'fullscreen' | 'selection' = 'fullscreen', e?: React.MouseEvent) => {
-    if (!activeStepId) return;
+    if (!currentStep || currentStep.type !== 'screenshot') return;
     flushPendingProjectBroadcast();
-    setRetakeStepId(activeStepId);
+    setRetakeStepId(currentStep.id);
     if (typeof window !== 'undefined' && window.electronAPI?.syncActiveProject && activeProject) {
       window.electronAPI.syncActiveProject(activeProject);
     }
@@ -122,8 +125,7 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
       } else if (type === 'html') {
         res = await exportToHtml(activeProject);
       } else if (type === 'markdown') {
-        exportToMarkdown(activeProject);
-        res = { success: true };
+        res = await exportToMarkdown(activeProject);
       } else if (type === 'bundle') {
         if (typeof window !== 'undefined' && window.electronAPI?.exportProjectBundle) {
           res = await window.electronAPI.exportProjectBundle(activeProject);
@@ -261,9 +263,13 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
         {/* Retake Fullscreen Button */}
         <button
           onClick={(e) => handleRetakeActive('fullscreen', e)}
-          disabled={!activeStepId}
-          className="p-1.5 rounded-md border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 transition-colors disabled:opacity-30 cursor-pointer"
-          title={`Retake full screen for current step (${cmdLabel}+Shift+S)`}
+          disabled={!canRetake}
+          className="p-1.5 rounded-md border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+          title={
+            canRetake
+              ? `Retake full screen for current step (${cmdLabel}+Shift+S)`
+              : 'Retake is only available for screenshot steps'
+          }
         >
           <Camera className="w-4 h-4" />
         </button>
@@ -271,9 +277,13 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
         {/* Retake Area Selection Button */}
         <button
           onClick={(e) => handleRetakeActive('selection', e)}
-          disabled={!activeStepId}
-          className="p-1.5 rounded-md border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-amber-500/90 hover:text-amber-500 transition-colors disabled:opacity-30 cursor-pointer"
-          title={`Retake selected area for current step (${cmdLabel}+Shift+A)`}
+          disabled={!canRetake}
+          className="p-1.5 rounded-md border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-amber-500/90 hover:text-amber-500 transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+          title={
+            canRetake
+              ? `Retake selected area for current step (${cmdLabel}+Shift+A)`
+              : 'Retake is only available for screenshot steps'
+          }
         >
           <Crop className="w-4 h-4" />
         </button>

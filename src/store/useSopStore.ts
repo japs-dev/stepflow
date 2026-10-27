@@ -91,6 +91,7 @@ export function deduplicateProjects(projects: SopProject[]): SopProject[] {
 
 // Helper to save projects to storage and IPC if present
 function persistProjects(projects: SopProject[]) {
+  if (typeof localStorage === 'undefined') return;
   try {
     const deduped = deduplicateProjects(projects);
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(deduped));
@@ -1031,12 +1032,15 @@ export const useSopStore = create<SopState>((set, get) => ({
     const { activeProject, projects } = get();
     if (!activeProject) return;
 
+    const currentTheme = activeProject.theme || DEFAULT_THEME;
+    const currentBeautify = currentTheme.beautifySettings || DEFAULT_THEME.beautifySettings;
+
     const updatedProject: SopProject = {
       ...activeProject,
       theme: {
-        ...activeProject.theme,
+        ...currentTheme,
         beautifySettings: {
-          ...activeProject.theme.beautifySettings,
+          ...currentBeautify,
           ...settings
         }
       },

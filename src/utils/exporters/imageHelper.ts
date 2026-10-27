@@ -546,6 +546,7 @@ export async function prepareExportProject(project: SopProject): Promise<SopProj
             };
           } catch (err) {
             console.warn('[prepareExportProject] Error rendering step image:', err);
+            return step;
           }
         }
         return step;
@@ -554,8 +555,37 @@ export async function prepareExportProject(project: SopProject): Promise<SopProj
     preparedSteps.push(...batchResults);
   }
 
+  // 3. Convert cover page background to Base64 data URL if it is a local asset path
+  let preparedCoverPage = project.coverPage;
+  if (
+    project.coverPage?.backgroundType === 'image' &&
+    project.coverPage?.backgroundImage &&
+    !project.coverPage.backgroundImage.startsWith('data:') &&
+    typeof document !== 'undefined'
+  ) {
+    try {
+      const coverImg = await loadImage(project.coverPage.backgroundImage);
+      const canvas = document.createElement('canvas');
+      canvas.width = coverImg.naturalWidth || 1920;
+      canvas.height = coverImg.naturalHeight || 1080;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(coverImg, 0, 0, canvas.width, canvas.height);
+        preparedCoverPage = {
+          ...project.coverPage,
+          backgroundImage: canvas.toDataURL('image/jpeg', 0.92),
+        };
+      }
+      canvas.width = 0;
+      canvas.height = 0;
+    } catch (coverErr) {
+      console.warn('[prepareExportProject] Failed to convert cover background to base64:', coverErr);
+    }
+  }
+
   return {
     ...project,
+    coverPage: preparedCoverPage,
     steps: preparedSteps,
   };
 }

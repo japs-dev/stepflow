@@ -191,6 +191,10 @@ export interface IpcBridge {
   triggerCapture: (isRetake?: boolean, mode?: 'fullscreen' | 'selection') => Promise<string | null>; // Returns file path or base64
   onCaptureCompleted: (callback: (imagePath: string) => void) => () => void;
   
+  // Selection Rect
+  submitSelectionRect?: (rect: { x: number; y: number; width: number; height: number }) => void;
+  cancelSelectionRect?: () => void;
+
   // Window Management & Synchronization
   minimizeToOverlay: (anchor?: { x: number; y: number }) => void;
   restoreStudio: () => void;
@@ -242,6 +246,7 @@ export interface IpcBridge {
   exportPptx: (project: SopProject, fileData?: ArrayBuffer | Uint8Array | string) => Promise<{ success: boolean; filePath?: string; error?: string }>;
   exportPdf: (project: SopProject, fileData?: ArrayBuffer | Uint8Array | string) => Promise<{ success: boolean; filePath?: string; error?: string }>;
   exportHtml: (project: SopProject, htmlContent?: string) => Promise<{ success: boolean; filePath?: string; error?: string }>;
+  exportMarkdown?: (payload: { markdown: string; defaultName?: string }) => Promise<{ success: boolean; canceled?: boolean; filePath?: string; error?: string }>;
 }
 
 declare global {

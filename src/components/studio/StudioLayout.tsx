@@ -4,6 +4,7 @@ import { StepOutline } from './StepOutline';
 import { CenterViewport } from './CenterViewport';
 import { StepInspector } from './StepInspector';
 import { useSopStore } from '../../store/useSopStore';
+import { ErrorBoundary } from '../common/ErrorBoundary';
 
 interface StudioLayoutProps {
   onTriggerCapture?: () => void;
@@ -21,7 +22,7 @@ export const StudioLayout: React.FC<StudioLayoutProps> = ({ onTriggerCapture }) 
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
   const [leftWidth, setLeftWidth] = useState(256);
-  const [rightWidth, setRightWidth] = useState(288);
+  const [rightWidth, setRightWidth] = useState(320);
 
   // Keyboard navigation shortcuts
   useEffect(() => {
@@ -107,7 +108,7 @@ export const StudioLayout: React.FC<StudioLayoutProps> = ({ onTriggerCapture }) 
 
       const onMouseMove = (moveEvent: MouseEvent) => {
         const delta = startX - moveEvent.clientX;
-        const newWidth = Math.max(220, Math.min(460, startWidth + delta));
+        const newWidth = Math.max(240, Math.min(520, startWidth + delta));
         setRightWidth(newWidth);
       };
 
@@ -172,13 +173,15 @@ export const StudioLayout: React.FC<StudioLayoutProps> = ({ onTriggerCapture }) 
         )}
 
         {/* Center Viewport: Expands seamlessly to fill available space */}
-        <CenterViewport
-          onTriggerCapture={handleCapture}
-          leftOpen={leftOpen}
-          rightOpen={rightOpen}
-          onOpenLeft={() => setLeftOpen(true)}
-          onOpenRight={() => setRightOpen(true)}
-        />
+        <ErrorBoundary fallbackTitle="Viewport error">
+          <CenterViewport
+            onTriggerCapture={handleCapture}
+            leftOpen={leftOpen}
+            rightOpen={rightOpen}
+            onOpenLeft={() => setLeftOpen(true)}
+            onOpenRight={() => setRightOpen(true)}
+          />
+        </ErrorBoundary>
 
         {/* Right Inspector: Contextual step details */}
         {rightOpen && (
