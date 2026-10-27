@@ -54,8 +54,10 @@ export const ProjectLibrary: React.FC = () => {
 
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Clear search when switching tabs so results don't bleed across views
-  useEffect(() => { setSearchQuery(''); }, [libraryTab]);
+  const handleSelectTab = (tab: 'sop' | 'error_faq') => {
+    setLibraryTab(tab);
+    setSearchQuery('');
+  };
 
   // Dropdown / Rename Modal state
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
@@ -448,7 +450,7 @@ export const ProjectLibrary: React.FC = () => {
               {/* SOP Icon Button */}
               <button
                 type="button"
-                onClick={() => setLibraryTab('sop')}
+                onClick={() => handleSelectTab('sop')}
                 className={`p-2.5 rounded-lg text-xs font-medium transition-all cursor-pointer relative ${
                   libraryTab === 'sop'
                     ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 shadow-xs'
@@ -468,7 +470,7 @@ export const ProjectLibrary: React.FC = () => {
               {RELEASE_FEATURES.errorFaq && (
                 <button
                   type="button"
-                  onClick={() => setLibraryTab('error_faq')}
+                  onClick={() => handleSelectTab('error_faq')}
                   className={`p-2.5 rounded-lg text-xs font-medium transition-all cursor-pointer relative ${
                     libraryTab === 'error_faq'
                       ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 shadow-xs'
@@ -511,7 +513,7 @@ export const ProjectLibrary: React.FC = () => {
                 {/* SOP Procedures Nav Item */}
                 <button
                   type="button"
-                  onClick={() => setLibraryTab('sop')}
+                  onClick={() => handleSelectTab('sop')}
                   className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
                     libraryTab === 'sop'
                       ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 shadow-xs'
@@ -537,7 +539,7 @@ export const ProjectLibrary: React.FC = () => {
                 {RELEASE_FEATURES.errorFaq && (
                   <button
                     type="button"
-                    onClick={() => setLibraryTab('error_faq')}
+                    onClick={() => handleSelectTab('error_faq')}
                     className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
                       libraryTab === 'error_faq'
                         ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 shadow-xs'

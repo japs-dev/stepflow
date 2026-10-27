@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useMemo } from 'react';
 import {
   FileText,
   Palette,
@@ -70,6 +70,21 @@ export const CoverPageStudio: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
+  const formattedDate = useMemo(() => {
+    try {
+      const raw = activeProject?.updatedAt || activeProject?.createdAt;
+      const d = raw ? new Date(raw) : new Date();
+      if (isNaN(d.getTime())) return new Date().toLocaleDateString();
+      return d.toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+    } catch {
+      return new Date().toLocaleDateString();
+    }
+  }, [activeProject]);
+
   if (!activeProject) return null;
 
   const cover: CoverPageSettings = {
@@ -126,21 +141,6 @@ export const CoverPageStudio: React.FC = () => {
     reader.readAsDataURL(file);
     e.target.value = '';
   };
-
-  const formattedDate = (() => {
-    try {
-      const raw = activeProject.updatedAt || activeProject.createdAt || Date.now();
-      const d = new Date(raw);
-      if (isNaN(d.getTime())) return new Date().toLocaleDateString();
-      return d.toLocaleDateString(undefined, {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-      });
-    } catch {
-      return new Date().toLocaleDateString();
-    }
-  })();
 
   const isHexColorLight = (hex?: string): boolean => {
     if (!hex || !hex.startsWith('#')) return false;

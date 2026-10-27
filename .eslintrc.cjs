@@ -13,7 +13,7 @@ module.exports = {
       jsx: true,
     },
   },
-  plugins: ['@typescript-eslint'],
+  plugins: ['@typescript-eslint', 'react-hooks'],
   extends: [
     'eslint:recommended',
     'plugin:@typescript-eslint/recommended',
@@ -28,6 +28,8 @@ module.exports = {
     '*.d.ts',
   ],
   rules: {
+    'react-hooks/rules-of-hooks': 'error',
+    'react-hooks/exhaustive-deps': 'off',
     '@typescript-eslint/no-explicit-any': 'off',
     '@typescript-eslint/no-unused-vars': [
       'warn',

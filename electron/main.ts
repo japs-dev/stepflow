@@ -45,12 +45,10 @@ app.on('before-quit', () => {
   isAppQuitting = true;
 });
 
-if (app.isPackaged) {
-  const hasSingleInstanceLock = app.requestSingleInstanceLock();
-  if (!hasSingleInstanceLock) {
-    appendRuntimeLog('[App] Another instance is already running in production - quitting');
-    app.quit();
-  }
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  appendRuntimeLog('[App] Another instance is already running - quitting');
+  app.quit();
 }
 
 function appendRuntimeLog(message: string, error?: unknown): void {
@@ -70,12 +68,7 @@ function appendRuntimeLog(message: string, error?: unknown): void {
   }
 }
 
-if (process.platform === 'win32') {
-  // Defensive startup flags for environments where hardware acceleration fails.
-  app.disableHardwareAcceleration();
-  app.commandLine.appendSwitch('disable-gpu');
-  app.commandLine.appendSwitch('disable-software-rasterizer');
-}
+
 
 // Determine storage paths with configurable workspace directory support
 interface StepFlowConfig {
@@ -553,15 +546,13 @@ function createStudioWindow(): BrowserWindow {
     return studioWindow;
   }
 
-  const showImmediately = process.platform === 'win32';
-
   studioWindow = new BrowserWindow({
     width: 1280,
     height: 850,
     minWidth: 900,
     minHeight: 600,
     title: 'StepFlow - SOP Creator',
-    show: showImmediately,
+    show: false,
     frame: process.platform === 'darwin' ? false : true,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 16, y: 16 },
@@ -585,7 +576,7 @@ function createStudioWindow(): BrowserWindow {
       studioWindow.show();
       studioWindow.focus();
     }
-  }, 8000);
+  }, 4000);
 
   studioWindow.once('ready-to-show', () => {
     clearTimeout(showFallbackTimer);
@@ -629,11 +620,6 @@ function createStudioWindow(): BrowserWindow {
   });
 
   loadRoute(studioWindow, '#/studio');
-
-  if (showImmediately) {
-    studioWindow.show();
-    studioWindow.focus();
-  }
 
   return studioWindow;
 }
@@ -2412,91 +2398,93 @@ function registerIpcHandlers(): void {
 }
 
 // App lifecycle
-app.whenReady().then(async () => {
-  appendRuntimeLog('[App] whenReady start');
+if (gotTheLock) {
+  app.whenReady().then(async () => {
+    appendRuntimeLog('[App] whenReady start');
 
-  process.on('uncaughtException', (err) => {
-    appendRuntimeLog('[Process] uncaughtException', err);
-  });
+    process.on('uncaughtException', (err) => {
+      appendRuntimeLog('[Process] uncaughtException', err);
+    });
 
-  process.on('unhandledRejection', (reason) => {
-    appendRuntimeLog('[Process] unhandledRejection', reason);
-  });
+    process.on('unhandledRejection', (reason) => {
+      appendRuntimeLog('[Process] unhandledRejection', reason);
+    });
 
-  app.on('child-process-gone', (_event, details) => {
-    appendRuntimeLog(
-      `[App] child-process-gone type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`
-    );
-  });
+    app.on('child-process-gone', (_event, details) => {
+      appendRuntimeLog(
+        `[App] child-process-gone type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`
+      );
+    });
 
-  app.on('browser-window-created', (_event, window) => {
-    appendRuntimeLog('[App] browser-window-created');
-    window.on('closed', () => {
-      appendRuntimeLog('[App] browser-window-closed');
+    app.on('browser-window-created', (_event, window) => {
+      appendRuntimeLog('[App] browser-window-created');
+      window.on('closed', () => {
+        appendRuntimeLog('[App] browser-window-closed');
+      });
+    });
+
+    app.on('render-process-gone', (_event, webContents, details) => {
+      appendRuntimeLog(
+        `[App] render-process-gone reason=${details.reason} exitCode=${details.exitCode} url=${webContents.getURL()}`
+      );
+    });
+
+    loadConfig();
+    // Protocol handler for streaming local assets securely
+    protocol.handle('stepflow-asset', (request) => {
+      try {
+        const resolved = resolveStepflowAssetPath(request.url);
+
+        if (!isSafeAssetFile(resolved)) {
+          console.warn('[Protocol] Access denied or unsafe asset:', resolved);
+          return new Response('Access denied', { status: 403 });
+        }
+
+        return net.fetch(pathToFileURL(resolved).toString());
+      } catch (err) {
+        console.error('[Protocol] Error streaming asset:', err);
+        return new Response('Asset not found', { status: 404 });
+      }
+    });
+
+    await ensureDirectories();
+    appendRuntimeLog('[App] directories ready');
+    setupProjectsFileWatcher();
+    registerIpcHandlers();
+    registerGlobalShortcuts();
+    appendRuntimeLog('[App] ipc and shortcuts registered');
+
+    createStudioWindow();
+    appendRuntimeLog('[App] windows created');
+
+    // Schedule background cleanup of unreferenced orphan screenshot files after window init
+    setTimeout(() => {
+      cleanupOrphanedAssets().catch((err: unknown) => console.warn('[App] Startup asset cleanup notice:', err));
+    }, 15000);
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0 || !studioWindow || studioWindow.isDestroyed()) {
+        createStudioWindow();
+      } else {
+        studioWindow.show();
+        studioWindow.focus();
+      }
     });
   });
 
-  app.on('render-process-gone', (_event, webContents, details) => {
-    appendRuntimeLog(
-      `[App] render-process-gone reason=${details.reason} exitCode=${details.exitCode} url=${webContents.getURL()}`
-    );
-  });
-
-  loadConfig();
-  // Protocol handler for streaming local assets securely
-  protocol.handle('stepflow-asset', (request) => {
-    try {
-      const resolved = resolveStepflowAssetPath(request.url);
-
-      if (!isSafeAssetFile(resolved)) {
-        console.warn('[Protocol] Access denied or unsafe asset:', resolved);
-        return new Response('Access denied', { status: 403 });
-      }
-
-      return net.fetch(pathToFileURL(resolved).toString());
-    } catch (err) {
-      console.error('[Protocol] Error streaming asset:', err);
-      return new Response('Asset not found', { status: 404 });
-    }
-  });
-
-  await ensureDirectories();
-  appendRuntimeLog('[App] directories ready');
-  setupProjectsFileWatcher();
-  registerIpcHandlers();
-  registerGlobalShortcuts();
-  appendRuntimeLog('[App] ipc and shortcuts registered');
-
-  createStudioWindow();
-  appendRuntimeLog('[App] windows created');
-
-  // Schedule background cleanup of unreferenced orphan screenshot files after window init
-  setTimeout(() => {
-    cleanupOrphanedAssets().catch((err: unknown) => console.warn('[App] Startup asset cleanup notice:', err));
-  }, 15000);
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0 || !studioWindow || studioWindow.isDestroyed()) {
+  app.on('second-instance', () => {
+    if (!studioWindow || studioWindow.isDestroyed()) {
       createStudioWindow();
-    } else {
-      studioWindow.show();
-      studioWindow.focus();
+      return;
     }
+
+    if (studioWindow.isMinimized()) {
+      studioWindow.restore();
+    }
+    studioWindow.show();
+    studioWindow.focus();
   });
-});
-
-app.on('second-instance', () => {
-  if (!studioWindow || studioWindow.isDestroyed()) {
-    createStudioWindow();
-    return;
-  }
-
-  if (studioWindow.isMinimized()) {
-    studioWindow.restore();
-  }
-  studioWindow.show();
-  studioWindow.focus();
-});
+}
 
 app.on('window-all-closed', () => {
   appendRuntimeLog('[App] window-all-closed');
