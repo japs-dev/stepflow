@@ -3,6 +3,10 @@ import { DEFAULT_COVER_PAGE_SETTINGS, type SopProject, type CalloutType } from '
 import { renderAnnotatedImage, prepareExportProject, getSafeFileName } from './imageHelper';
 import { stripMarkdown } from '../markdownHelper';
 
+interface ExportContentOptions {
+  includeChangelog?: boolean;
+}
+
 function hexToRgb(hex?: string, fallback: [number, number, number] = [37, 99, 235]): [number, number, number] {
   if (!hex) return fallback;
   const cleaned = hex.replace(/^#/, '').trim();
@@ -19,6 +23,99 @@ function hexToRgb(hex?: string, fallback: [number, number, number] = [37, 99, 23
     return [r, g, b];
   }
   return fallback;
+}
+
+function sanitizePdfText(input?: string): string {
+  if (!input) return '';
+  return input
+    .replace(/\r\n/g, '\n')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, ' ')
+    .replace(/\t+/g, ' ')
+    .replace(/[ ]+\n/g, '\n')
+    .replace(/ {2,}/g, ' ')
+    .trim();
+}
+
+function isDarkColor(rgb: [number, number, number]): boolean {
+  const luminance = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+  return luminance < 150;
+}
+
+function formatDateLabel(value?: string): string {
+  if (!value) return 'N/A';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString();
+}
+
+function trimToWidth(doc: jsPDF, value: string, maxWidth: number): string {
+  let text = value;
+  while (doc.getTextWidth(text) > maxWidth && text.length > 4) {
+    text = `${text.slice(0, -4)}...`;
+  }
+  return text;
+}
+
+function buildChangedStepsLabel(
+  currentSteps: Array<{ id: string; order: number; title: string }>,
+  previousSteps: Array<{ id: string; order: number; title: string }>
+): string {
+  const prevMap = new Map(previousSteps.map((step) => [step.id, step]));
+  const currentMap = new Map(currentSteps.map((step) => [step.id, step]));
+
+  const added: string[] = [];
+  const removed: string[] = [];
+  const updated: string[] = [];
+
+  for (const step of currentSteps) {
+    const previousStep = prevMap.get(step.id);
+    const label = `S${step.order}`;
+    if (!previousStep) {
+      added.push(label);
+      continue;
+    }
+    if (JSON.stringify(previousStep) !== JSON.stringify(step)) {
+      updated.push(label);
+    }
+  }
+
+  for (const previousStep of previousSteps) {
+    if (!currentMap.has(previousStep.id)) {
+      removed.push(`S${previousStep.order}`);
+    }
+  }
+
+  const parts: string[] = [];
+  if (added.length) parts.push(`Added ${added.join(', ')}`);
+  if (updated.length) parts.push(`Updated ${updated.join(', ')}`);
+  if (removed.length) parts.push(`Removed ${removed.join(', ')}`);
+  return parts.join(' | ') || 'No step-level changes';
+}
+
+function buildChangelogRows(project: SopProject): Array<{ date: string; editor: string; changedSteps: string; summary: string }> {
+  const history = project.history || [];
+  if (history.length === 0) {
+    return [
+      {
+        date: formatDateLabel(project.updatedAt || project.createdAt),
+        editor: project.author || 'Team Member',
+        changedSteps: 'No published history yet',
+        summary: 'Initial draft state'
+      }
+    ];
+  }
+
+  return history.map((entry, index) => {
+    const previousEntry = history[index + 1];
+    const previousSteps = previousEntry?.snapshot.steps || [];
+    return {
+      date: formatDateLabel(entry.createdAt),
+      editor: entry.author || project.author || 'Team Member',
+      changedSteps: buildChangedStepsLabel(entry.snapshot.steps, previousSteps),
+      summary: entry.summary || 'Updated SOP content'
+    };
+  });
 }
 
 function getCalloutPdfColors(type?: CalloutType): {
@@ -56,7 +153,8 @@ function getCalloutPdfColors(type?: CalloutType): {
 /**
  * Builds the jsPDF Document instance
  */
-export async function buildPdfDocument(project: SopProject): Promise<jsPDF> {
+export async function buildPdfDocument(project: SopProject, options: ExportContentOptions = {}): Promise<jsPDF> {
+  const { includeChangelog = true } = options;
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'pt',
@@ -90,13 +188,16 @@ export async function buildPdfDocument(project: SopProject): Promise<jsPDF> {
   // 1. FRONT COVER PAGE (PAGE 1)
   // ==========================================
   if (hasCoverPage) {
-    const isLightBg =
+    const fallbackLightBg =
       cover.backgroundType === 'color' &&
-      (cover.backgroundColor === '#ffffff' || cover.backgroundColor === '#f1f5f9');
-    const titleTextRgb: [number, number, number] = isLightBg ? [15, 23, 42] : [255, 255, 255];
-    const subTextRgb: [number, number, number] = isLightBg ? [71, 85, 105] : [203, 213, 225];
-    const cardBgRgb: [number, number, number] = isLightBg ? [241, 245, 249] : [30, 41, 59];
-    const cardBorderRgb: [number, number, number] = isLightBg ? [226, 232, 240] : [51, 65, 85];
+      ['#ffffff', '#f1f5f9', '#f2f4f7'].includes((cover.backgroundColor || '').toLowerCase());
+    const explicitTextRgb = cover.textColor ? hexToRgb(cover.textColor, [255, 255, 255]) : null;
+    const useDarkText = explicitTextRgb ? isDarkColor(explicitTextRgb) : fallbackLightBg;
+
+    const titleTextRgb: [number, number, number] = explicitTextRgb || (useDarkText ? [15, 23, 42] : [255, 255, 255]);
+    const subTextRgb: [number, number, number] = useDarkText ? [71, 85, 105] : [203, 213, 225];
+    const cardBgRgb: [number, number, number] = useDarkText ? [241, 245, 249] : [30, 41, 59];
+    const cardBorderRgb: [number, number, number] = useDarkText ? [226, 232, 240] : [51, 65, 85];
 
     // Background Render
     if (cover.backgroundType === 'image' && cover.backgroundImage) {
@@ -134,6 +235,9 @@ export async function buildPdfDocument(project: SopProject): Promise<jsPDF> {
       // Gradient Presets mapped to rich solid base
       let bgRgb: [number, number, number] = [15, 23, 42];
       if (cover.backgroundGradient?.includes('#1e3a8a')) bgRgb = [30, 58, 138];
+      else if (cover.backgroundGradient?.includes('#0077C8')) bgRgb = [0, 119, 200];
+      else if (cover.backgroundGradient?.includes('#00B3E3')) bgRgb = [0, 179, 227];
+      else if (cover.backgroundGradient?.includes('#00C3B2')) bgRgb = [0, 195, 178];
       else if (cover.backgroundGradient?.includes('#064e3b')) bgRgb = [6, 78, 59];
       else if (cover.backgroundGradient?.includes('#312e81')) bgRgb = [49, 46, 129];
       else if (cover.backgroundGradient?.includes('#581c87')) bgRgb = [88, 28, 135];
@@ -265,11 +369,80 @@ export async function buildPdfDocument(project: SopProject): Promise<jsPDF> {
     currentY += 20;
   }
 
+  if (includeChangelog) {
+    // ==========================================
+    // 2. CHANGELOG TABLE
+    // ==========================================
+    const changelogRows = buildChangelogRows(project);
+    if (currentY + 180 > bottomThreshold) {
+      doc.addPage();
+      currentY = margin + 10;
+    }
+
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...primaryRgb);
+    doc.text('Document Changelog', margin, currentY + 12);
+    currentY += 26;
+
+    const dateColW = 118;
+    const editorColW = 92;
+    const changedColW = 132;
+    const summaryColW = contentWidth - dateColW - editorColW - changedColW;
+
+    doc.setFillColor(241, 245, 249);
+    doc.rect(margin, currentY, contentWidth, 20, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.75);
+    doc.rect(margin, currentY, contentWidth, 20, 'D');
+
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(71, 85, 105);
+    doc.text('CHANGE DATE', margin + 6, currentY + 13);
+    doc.text('EDITOR', margin + dateColW + 6, currentY + 13);
+    doc.text('CHANGED STEPS', margin + dateColW + editorColW + 6, currentY + 13);
+    doc.text('PUBLISH SUMMARY', margin + dateColW + editorColW + changedColW + 6, currentY + 13);
+    currentY += 20;
+
+    doc.setFontSize(8.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(30, 41, 59);
+
+    for (const row of changelogRows) {
+      if (currentY + 22 > bottomThreshold) {
+        doc.addPage();
+        currentY = margin + 14;
+      }
+
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.5);
+      doc.rect(margin, currentY, contentWidth, 22, 'D');
+
+      const dateText = trimToWidth(doc, sanitizePdfText(row.date), dateColW - 10);
+      const editorText = trimToWidth(doc, sanitizePdfText(row.editor), editorColW - 10);
+      const changedText = trimToWidth(doc, sanitizePdfText(row.changedSteps), changedColW - 10);
+      const summaryText = trimToWidth(doc, sanitizePdfText(row.summary), summaryColW - 10);
+
+      doc.text(dateText, margin + 6, currentY + 14);
+      doc.text(editorText, margin + dateColW + 6, currentY + 14);
+      doc.text(changedText, margin + dateColW + editorColW + 6, currentY + 14);
+      doc.text(summaryText, margin + dateColW + editorColW + changedColW + 6, currentY + 14);
+
+      currentY += 22;
+    }
+
+    currentY += 18;
+  }
+
   // ==========================================
-  // 2. SEQUENTIAL STEP CARDS WITH SMART PAGINATION
+  // 3. SEQUENTIAL STEP CARDS WITH SMART PAGINATION
   // ==========================================
   const sortedSteps = [...(project.steps || [])].sort((a, b) => a.order - b.order);
   for (const step of sortedSteps) {
+    const cleanDescription = sanitizePdfText(stripMarkdown(step.description, { preserveNewlines: true }));
+    const cleanCalloutText = sanitizePdfText(step.callout?.text || '');
+
     // 1. Pre-calculate estimated height for this step
     let estimatedHeight = 26; // Card inner padding (top 14 + bottom 12)
 
@@ -281,15 +454,15 @@ export async function buildPdfDocument(project: SopProject): Promise<jsPDF> {
     const estHeaderH = Math.max(18, estTitleLines.length * 15);
     estimatedHeight += estHeaderH + 14;
 
-    if (step.description) {
+    if (cleanDescription) {
       doc.setFontSize(9.5);
-      const splitDesc = doc.splitTextToSize(step.description, contentWidth - 28);
+      const splitDesc = doc.splitTextToSize(cleanDescription, contentWidth - 28);
       estimatedHeight += 8 + splitDesc.length * 14 + 10;
     }
 
-    if (step.callout && step.callout.text) {
+    if (step.callout && cleanCalloutText) {
       doc.setFontSize(8.5);
-      const calloutText = `${step.callout.type.toUpperCase()}: ${step.callout.text}`;
+      const calloutText = `${step.callout.type.toUpperCase()}: ${cleanCalloutText}`;
       const splitCallout = doc.splitTextToSize(calloutText, contentWidth - 28 - 28);
       const calloutH = Math.max(28, splitCallout.length * 13 + 16);
       estimatedHeight += calloutH + 14;
@@ -389,22 +562,20 @@ export async function buildPdfDocument(project: SopProject): Promise<jsPDF> {
     currentY += headerH + 14;
 
     // Step Description
-    if (step.description) {
+    if (cleanDescription) {
       doc.setFontSize(9.5);
       doc.setFont('helvetica', 'normal');
       doc.setTextColor(51, 65, 85);
 
-      const cleanDesc = stripMarkdown(step.description, { preserveNewlines: true });
-
-      const descLines = doc.splitTextToSize(cleanDesc, cardContentW);
+      const descLines = doc.splitTextToSize(cleanDescription, cardContentW);
       doc.text(descLines, cardContentX, currentY + 8);
       currentY += 8 + descLines.length * 14 + 10;
     }
 
     // Callout Box
-    if (step.callout && step.callout.text) {
+    if (step.callout && cleanCalloutText) {
       const cTheme = getCalloutPdfColors(step.callout.type);
-      const calloutText = `${cTheme.label}: ${step.callout.text}`;
+      const calloutText = `${cTheme.label}: ${cleanCalloutText}`;
       const splitCallout = doc.splitTextToSize(calloutText, cardContentW - 28);
       const calloutHeight = Math.max(28, splitCallout.length * 13 + 16);
 
@@ -450,13 +621,15 @@ export async function buildPdfDocument(project: SopProject): Promise<jsPDF> {
         doc.setFont('helvetica', 'bold');
         doc.setTextColor(30, 41, 59);
         const subTextX = cardContentX + 24;
-        doc.text(sub.title, subTextX, circleCenterY + 3);
+        doc.text(sanitizePdfText(sub.title), subTextX, circleCenterY + 3);
 
         if (sub.note) {
           doc.setFont('helvetica', 'normal');
           doc.setTextColor(100, 116, 139);
-          const titleWidth = doc.getTextWidth(sub.title);
-          doc.text(` — ${sub.note}`, subTextX + titleWidth + 4, circleCenterY + 3);
+          const safeSubTitle = sanitizePdfText(sub.title);
+          const safeSubNote = sanitizePdfText(sub.note);
+          const titleWidth = doc.getTextWidth(safeSubTitle);
+          doc.text(` — ${safeSubNote}`, subTextX + titleWidth + 4, circleCenterY + 3);
         }
 
         currentY += 22;
@@ -697,11 +870,12 @@ export async function buildPdfDocument(project: SopProject): Promise<jsPDF> {
  * Gracefully delegates to Electron IPC if present, or downloads in browser.
  */
 export async function exportToPdf(
-  project: SopProject
+  project: SopProject,
+  options: ExportContentOptions = {}
 ): Promise<{ success: boolean; filePath?: string; error?: string }> {
   try {
     const preparedProject = await prepareExportProject(project);
-    const doc = await buildPdfDocument(preparedProject);
+    const doc = await buildPdfDocument(preparedProject, options);
     const safeName = getSafeFileName(project.name, 'pdf');
 
     // 1. Electron bridge support

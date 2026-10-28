@@ -11,6 +11,7 @@ import {
   X,
   BookOpen,
   ListOrdered,
+  History,
   PanelLeft
 } from 'lucide-react';
 import { useSopStore, isDefaultStepTitle } from '../../store/useSopStore';
@@ -32,6 +33,8 @@ export const StepOutline: React.FC<StepOutlineProps> = ({
     activeProject,
     activeStepId,
     setActiveStepId,
+    updateCoverPageSettings,
+    updateProjectDetails,
     addStep,
     addTextStep,
     reorderSteps,
@@ -267,9 +270,22 @@ export const StepOutline: React.FC<StepOutlineProps> = ({
                   </span>
                 </div>
 
-                {cover.enabled && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" title="Cover Page Included" />
-                )}
+                <label
+                  className="relative inline-flex h-5 w-9 items-center cursor-pointer shrink-0"
+                  onClick={(e) => e.stopPropagation()}
+                  title="Include Front Cover in Document"
+                >
+                  <input
+                    type="checkbox"
+                    checked={cover.enabled}
+                    onChange={(e) => updateCoverPageSettings({ enabled: e.target.checked })}
+                    className="sr-only peer"
+                  />
+                  <span className="absolute inset-0 rounded-full border border-zinc-300 bg-zinc-200 transition-colors peer-checked:border-zinc-900 peer-checked:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-700 dark:peer-checked:border-zinc-200 dark:peer-checked:bg-zinc-600" />
+                  <span className="absolute left-[2px] top-[2px] flex h-4 w-4 items-center justify-center rounded-full border border-zinc-300 bg-white text-[9px] font-bold text-zinc-800 shadow-sm transition-all peer-checked:left-[18px] peer-checked:border-zinc-900 dark:border-zinc-500 dark:bg-zinc-200 dark:text-zinc-900">
+                    <span className="opacity-0 transition-opacity peer-checked:opacity-100">✓</span>
+                  </span>
+                </label>
               </div>
             );
           })()}
@@ -277,7 +293,6 @@ export const StepOutline: React.FC<StepOutlineProps> = ({
           {/* Table of Contents / Index Navigation Card */}
           {(() => {
             const cover = activeProject.coverPage || DEFAULT_COVER_PAGE_SETTINGS;
-            if (cover.showTableOfContents === false) return null;
             const isIndexActive = activeStepId === 'index';
 
             return (
@@ -298,9 +313,80 @@ export const StepOutline: React.FC<StepOutlineProps> = ({
                     Table of Contents
                   </span>
                   <span className="text-[10px] text-zinc-400 block truncate">
-                    Index • {activeProject.steps.length} Steps
+                    {cover.showTableOfContents ? `Index • ${activeProject.steps.length} Steps` : 'Index • Off'}
                   </span>
                 </div>
+
+                <label
+                  className="relative inline-flex h-5 w-9 items-center cursor-pointer shrink-0"
+                  onClick={(e) => e.stopPropagation()}
+                  title="Include Table of Contents in Document"
+                >
+                  <input
+                    type="checkbox"
+                    checked={cover.showTableOfContents !== false}
+                    onChange={(e) => updateCoverPageSettings({ showTableOfContents: e.target.checked })}
+                    className="sr-only peer"
+                  />
+                  <span className="absolute inset-0 rounded-full border border-zinc-300 bg-zinc-200 transition-colors peer-checked:border-zinc-900 peer-checked:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-700 dark:peer-checked:border-zinc-200 dark:peer-checked:bg-zinc-600" />
+                  <span className="absolute left-[2px] top-[2px] flex h-4 w-4 items-center justify-center rounded-full border border-zinc-300 bg-white text-[9px] font-bold text-zinc-800 shadow-sm transition-all peer-checked:left-[18px] peer-checked:border-zinc-900 dark:border-zinc-500 dark:bg-zinc-200 dark:text-zinc-900">
+                    <span className="opacity-0 transition-opacity peer-checked:opacity-100">✓</span>
+                  </span>
+                </label>
+              </div>
+            );
+          })()}
+
+          {(() => {
+            const historyCount = activeProject.history?.length || 0;
+            const isHistoryActive = activeStepId === 'history';
+            const includeChangelog = activeProject.exportSettings?.includeChangelog !== false;
+
+            return (
+              <div
+                onClick={() => setActiveStepId('history')}
+                className={`group flex items-center gap-2 p-2 rounded-md border transition-all cursor-pointer ${
+                  isHistoryActive
+                    ? 'bg-white dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 shadow-xs'
+                    : 'bg-transparent border-transparent hover:bg-zinc-200/50 dark:hover:bg-zinc-800/40 text-zinc-600 dark:text-zinc-400'
+                }`}
+              >
+                <div className="w-6 h-6 rounded border border-zinc-200 dark:border-zinc-700 bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-300 flex items-center justify-center shrink-0">
+                  <History className="w-3.5 h-3.5" />
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  <span className="text-[11px] font-bold text-zinc-900 dark:text-zinc-100 truncate block">
+                    SOP History
+                  </span>
+                  <span className="text-[10px] text-zinc-400 block truncate">
+                    {historyCount} {historyCount === 1 ? 'Version' : 'Versions'} • {includeChangelog ? 'Included' : 'Off'}
+                  </span>
+                </div>
+
+                <label
+                  className="relative inline-flex h-5 w-9 items-center cursor-pointer shrink-0"
+                  onClick={(e) => e.stopPropagation()}
+                  title="Include SOP History Changelog in Document"
+                >
+                  <input
+                    type="checkbox"
+                    checked={includeChangelog}
+                    onChange={(e) =>
+                      updateProjectDetails({
+                        exportSettings: {
+                          ...(activeProject.exportSettings || {}),
+                          includeChangelog: e.target.checked
+                        }
+                      })
+                    }
+                    className="sr-only peer"
+                  />
+                  <span className="absolute inset-0 rounded-full border border-zinc-300 bg-zinc-200 transition-colors peer-checked:border-zinc-900 peer-checked:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-700 dark:peer-checked:border-zinc-200 dark:peer-checked:bg-zinc-600" />
+                  <span className="absolute left-[2px] top-[2px] flex h-4 w-4 items-center justify-center rounded-full border border-zinc-300 bg-white text-[9px] font-bold text-zinc-800 shadow-sm transition-all peer-checked:left-[18px] peer-checked:border-zinc-900 dark:border-zinc-500 dark:bg-zinc-200 dark:text-zinc-900">
+                    <span className="opacity-0 transition-opacity peer-checked:opacity-100">✓</span>
+                  </span>
+                </label>
               </div>
             );
           })()}

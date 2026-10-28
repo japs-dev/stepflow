@@ -16,6 +16,20 @@ export const DEFAULT_THEME: ProjectTheme = {
   beautifySettings: DEFAULT_BEAUTIFY_SETTINGS
 };
 
+export const SAMSUNG_THEME: ProjectTheme = {
+  primaryColor: '#1428A0', // Samsung Blue
+  accentColor: '#0077C8',  // Sky Blue
+  fontFamily: 'system-ui, -apple-system, sans-serif',
+  beautifySettings: {
+    enabled: true,
+    padding: 24,
+    backgroundType: 'solid',
+    backgroundColor: '#F2F4F7', // Cloud
+    borderRadius: 8,
+    shadowBlur: 18,
+  },
+};
+
 // Vector SVG mockups for sample project
 const STEP_1_SVG = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540" fill="none"><rect width="960" height="540" rx="8" fill="%23ffffff"/><rect width="960" height="40" fill="%23f8fafc" stroke="%23e2e8f0" stroke-width="1"/><circle cx="20" cy="20" r="5" fill="%23ef4444"/><circle cx="36" cy="20" r="5" fill="%23f59e0b"/><circle cx="52" cy="20" r="5" fill="%2310b981"/><rect x="100" y="8" width="340" height="24" rx="5" fill="%23ffffff" stroke="%23cbd5e1"/><text x="116" y="24" font-family="system-ui, sans-serif" font-size="11" fill="%2364748b">https://merchant.acme.corp/admin/transactions</text><rect x="0" y="40" width="180" height="500" fill="%23f8fafc" stroke="%23e2e8f0"/><text x="20" y="74" font-family="system-ui, sans-serif" font-weight="700" font-size="13" fill="%230f172a">MerchantOS</text><rect x="10" y="92" width="160" height="30" rx="5" fill="%23e2e8f0"/><text x="24" y="112" font-family="system-ui, sans-serif" font-size="12" font-weight="600" fill="%230f172a">Transactions</text><text x="24" y="146" font-family="system-ui, sans-serif" font-size="12" fill="%2364748b">Customers</text><text x="24" y="180" font-family="system-ui, sans-serif" font-size="12" fill="%2364748b">Disputes</text><text x="24" y="214" font-family="system-ui, sans-serif" font-size="12" fill="%2364748b">Reports</text><text x="210" y="80" font-family="system-ui, sans-serif" font-weight="700" font-size="18" fill="%230f172a">Search &amp; Filter Transactions</text><rect x="210" y="100" width="380" height="34" rx="6" fill="%23ffffff" stroke="%233b82f6" stroke-width="2"/><text x="226" y="122" font-family="system-ui, sans-serif" font-size="13" fill="%230f172a">ORD-89421</text><rect x="600" y="100" width="80" height="34" rx="6" fill="%232563eb"/><text x="622" y="122" font-family="system-ui, sans-serif" font-size="12" font-weight="600" fill="%23ffffff">Search</text><rect x="210" y="160" width="710" height="36" rx="6" fill="%23f1f5f9"/><text x="226" y="183" font-family="system-ui, sans-serif" font-weight="600" font-size="12" fill="%23475569">ID</text><text x="340" y="183" font-family="system-ui, sans-serif" font-weight="600" font-size="12" fill="%23475569">Customer</text><text x="530" y="183" font-family="system-ui, sans-serif" font-weight="600" font-size="12" fill="%23475569">Amount</text><text x="680" y="183" font-family="system-ui, sans-serif" font-weight="600" font-size="12" fill="%23475569">Status</text><rect x="210" y="206" width="710" height="50" rx="6" fill="%23eff6ff" stroke="%2393c5fd" stroke-width="1.5"/><text x="226" y="236" font-family="system-ui, sans-serif" font-weight="600" font-size="13" fill="%231d4ed8">ORD-89421</text><text x="340" y="236" font-family="system-ui, sans-serif" font-size="13" fill="%230f172a">jordan.smith@workplace.com</text><text x="530" y="236" font-family="system-ui, sans-serif" font-weight="600" font-size="13" fill="%230f172a">$74.50 USD</text><rect x="680" y="222" width="60" height="22" rx="11" fill="%23dcfce7"/><text x="694" y="237" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="%23166534">Paid</text></svg>`;
 

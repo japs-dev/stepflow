@@ -4,6 +4,7 @@ import {
   updateStepOrderAndTitle,
   normalizeProjectSteps,
   deduplicateProjects,
+  calculateHistoryChangeSummary,
 } from '../store/useSopStore';
 import { stripMarkdown } from '../utils/markdownHelper';
 import { prepareExportProject } from '../utils/exporters/imageHelper';
@@ -165,6 +166,49 @@ describe('StepFlow Core Utilities & Invariants', () => {
     });
   });
 
+  describe('calculateHistoryChangeSummary', () => {
+    it('reports added, removed, and updated step counts correctly', () => {
+      const previous: SopStep[] = [
+        {
+          id: 'step-1',
+          order: 1,
+          type: 'text_only',
+          title: 'Initial step',
+          description: 'A'
+        },
+        {
+          id: 'step-2',
+          order: 2,
+          type: 'text_only',
+          title: 'Removed later',
+          description: 'B'
+        }
+      ];
+
+      const next: SopStep[] = [
+        {
+          id: 'step-1',
+          order: 1,
+          type: 'text_only',
+          title: 'Initial step',
+          description: 'A updated'
+        },
+        {
+          id: 'step-3',
+          order: 2,
+          type: 'text_only',
+          title: 'New step',
+          description: 'C'
+        }
+      ];
+
+      const summary = calculateHistoryChangeSummary(previous, next);
+      expect(summary.added).toBe(1);
+      expect(summary.removed).toBe(1);
+      expect(summary.updated).toBe(1);
+    });
+  });
+
   describe('stripMarkdown', () => {
     it('removes markdown formatting for plain-text representations', () => {
       const raw = '### Heading\n\nThis is **bold** and *italic* with `inline code` and [a link](https://stepflow.app).';
@@ -273,6 +317,25 @@ describe('StepFlow Core Utilities & Invariants', () => {
       expect(md).toContain('**WARNING**: Never commit production tokens to git.');
       expect(md).toContain('- (1) **Check DATABASE_URL**');
       expect(md).toContain('- (2) **Verify KMS Key**: Must match region');
+    });
+
+    it('omits changelog section when includeChangelog option is disabled', () => {
+      const project: SopProject = {
+        id: 'sop-md-no-log',
+        name: 'No Changelog SOP',
+        version: '1.0.0',
+        author: 'Author',
+        tags: [],
+        status: 'draft',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z',
+        theme: {} as any,
+        steps: [],
+      };
+
+      const md = generateMarkdownString(project, { includeChangelog: false });
+      expect(md).not.toContain('## Changelog');
+      expect(md).toContain('## Procedure Steps');
     });
   });
 });

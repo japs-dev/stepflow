@@ -1,6 +1,10 @@
 import { DEFAULT_COVER_PAGE_SETTINGS, type SopProject } from '../../types/sop';
 import { getSafeFileName, downloadBlob, prepareExportProject } from './imageHelper';
 
+interface ExportContentOptions {
+  includeChangelog?: boolean;
+}
+
 function escapeHtml(str?: string): string {
   if (!str) return '';
   return str
@@ -9,6 +13,76 @@ function escapeHtml(str?: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function formatDateLabel(value?: string): string {
+  if (!value) return 'N/A';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString();
+}
+
+function buildChangedStepsLabel(
+  currentSteps: Array<{ id: string; order: number; title: string }>,
+  previousSteps: Array<{ id: string; order: number; title: string }>
+): string {
+  const previousMap = new Map(previousSteps.map((step) => [step.id, step]));
+  const currentMap = new Map(currentSteps.map((step) => [step.id, step]));
+
+  const added: string[] = [];
+  const removed: string[] = [];
+  const updated: string[] = [];
+
+  for (const step of currentSteps) {
+    const previousStep = previousMap.get(step.id);
+    const label = `Step ${step.order}: ${step.title}`;
+    if (!previousStep) {
+      added.push(label);
+      continue;
+    }
+    if (JSON.stringify(previousStep) !== JSON.stringify(step)) {
+      updated.push(label);
+    }
+  }
+
+  for (const previousStep of previousSteps) {
+    if (!currentMap.has(previousStep.id)) {
+      removed.push(`Step ${previousStep.order}: ${previousStep.title}`);
+    }
+  }
+
+  const parts: string[] = [];
+  if (added.length) parts.push(`Added: ${added.join(', ')}`);
+  if (updated.length) parts.push(`Updated: ${updated.join(', ')}`);
+  if (removed.length) parts.push(`Removed: ${removed.join(', ')}`);
+
+  return parts.join(' | ') || 'No step-level changes';
+}
+
+function buildChangelogRows(project: SopProject): Array<{ date: string; editor: string; changedSteps: string; summary: string }> {
+  const history = project.history || [];
+  if (history.length === 0) {
+    return [
+      {
+        date: formatDateLabel(project.updatedAt || project.createdAt),
+        editor: project.author || 'Team Member',
+        changedSteps: 'No published history yet',
+        summary: 'Initial draft state'
+      }
+    ];
+  }
+
+  return history.map((entry, index) => {
+    const previousEntry = history[index + 1];
+    const previousSteps = previousEntry?.snapshot.steps || [];
+
+    return {
+      date: formatDateLabel(entry.createdAt),
+      editor: entry.author || project.author || 'Team Member',
+      changedSteps: buildChangedStepsLabel(entry.snapshot.steps, previousSteps),
+      summary: entry.summary || 'Updated SOP content'
+    };
+  });
 }
 
 function parseMarkdownToHtml(content?: string): string {
@@ -91,7 +165,8 @@ function parseMarkdownToHtml(content?: string): string {
 /**
  * Builds the standalone interactive HTML string
  */
-export async function buildHtmlPlayerString(rawProject: SopProject): Promise<string> {
+export async function buildHtmlPlayerString(rawProject: SopProject, options: ExportContentOptions = {}): Promise<string> {
+  const { includeChangelog = true } = options;
   const needsPrep = rawProject.steps?.some(
     (s) => s.type === 'screenshot' && s.image?.originalImagePath && !s.image?.annotatedCachePath
   );
@@ -204,6 +279,42 @@ export async function buildHtmlPlayerString(rawProject: SopProject): Promise<str
       </section>
     `;
   }
+
+  const changelogRows = buildChangelogRows(project)
+    .map(
+      (row) => `
+        <tr>
+          <td>${escapeHtml(row.date)}</td>
+          <td>${escapeHtml(row.editor)}</td>
+          <td>${escapeHtml(row.changedSteps)}</td>
+          <td>${escapeHtml(row.summary)}</td>
+        </tr>
+      `
+    )
+    .join('');
+
+  const changelogSectionHtml = `
+    <section class="changelog-card">
+      <div class="changelog-header">
+        <div class="changelog-title">Document Changelog</div>
+      </div>
+      <div class="changelog-table-wrap">
+        <table class="changelog-table">
+          <thead>
+            <tr>
+              <th>Change Date</th>
+              <th>Editor</th>
+              <th>Changed Steps</th>
+              <th>Publish Summary</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${changelogRows}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
 
   // Overview mode static HTML generation
   const overviewCardsHtml = sortedSteps
@@ -953,6 +1064,56 @@ export async function buildHtmlPlayerString(rawProject: SopProject): Promise<str
       gap: 10px;
     }
 
+    .changelog-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 20px 24px;
+      box-shadow: var(--card-shadow);
+    }
+
+    .changelog-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .changelog-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .changelog-table-wrap {
+      width: 100%;
+      overflow-x: auto;
+    }
+
+    .changelog-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    .changelog-table th,
+    .changelog-table td {
+      text-align: left;
+      border-bottom: 1px solid var(--border-color);
+      padding: 9px 10px;
+      vertical-align: top;
+      color: var(--text-main);
+    }
+
+    .changelog-table th {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+      font-weight: 700;
+      background: var(--bg-elevated);
+    }
+
     .toc-item {
       display: flex;
       align-items: center;
@@ -1204,6 +1365,7 @@ export async function buildHtmlPlayerString(rawProject: SopProject): Promise<str
         </div>
       </header>
       ${tocSectionHtml}
+      ${includeChangelog ? changelogSectionHtml : ''}
       ${overviewCardsHtml}
       <footer style="margin-top: 40px; padding: 20px 0; border-top: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--text-muted);">
         <span>${escapeHtml(project.footerText?.trim() || (project.department || cover.organization ? `Confidential • ${project.department || cover.organization} • Internal Use Only` : 'Confidential • Internal Use Only • Generated by StepFlow'))}</span>
@@ -1554,11 +1716,12 @@ export async function buildHtmlPlayerString(rawProject: SopProject): Promise<str
  * Dual support for Electron bridge and web browser download.
  */
 export async function exportToHtml(
-  project: SopProject
+  project: SopProject,
+  options: ExportContentOptions = {}
 ): Promise<{ success: boolean; filePath?: string; error?: string }> {
   try {
     const preparedProject = await prepareExportProject(project);
-    const htmlString = await buildHtmlPlayerString(preparedProject);
+    const htmlString = await buildHtmlPlayerString(preparedProject, options);
     const safeName = getSafeFileName(project.name, 'html');
 
     // 1. Electron bridge support

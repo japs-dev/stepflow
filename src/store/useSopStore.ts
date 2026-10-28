@@ -2,11 +2,14 @@ import { create } from 'zustand';
 import {
   SopProject,
   SopStep,
+  SopHistoryEntry,
+  SopHistoryChangeSummary,
   CalloutType,
   BeautifySettings,
   AnnotationItem,
   CoverPageSettings,
   DEFAULT_COVER_PAGE_SETTINGS,
+  DEFAULT_EXPORT_SETTINGS,
   ErrorFaqItem,
   OcrAnalysisResult,
 } from '../types/sop';
@@ -51,6 +54,8 @@ export interface SopState {
   duplicateProject: (id: string) => SopProject | null;
   updateProjectById: (id: string, updates: Partial<SopProject>) => void;
   updateProjectDetails: (details: Partial<SopProject>) => void;
+  publishProjectVersion: (summary: string) => SopHistoryEntry | null;
+  restoreProjectVersion: (historyEntryId: string) => boolean;
   updateCoverPageSettings: (settings: Partial<CoverPageSettings>) => void;
   addStep: (imagePath?: string, title?: string, description?: string) => SopStep;
   addTextStep: (title?: string, description?: string) => SopStep;
@@ -277,8 +282,59 @@ export function normalizeProjectSteps(project: SopProject): SopProject {
 
   return {
     ...project,
+    exportSettings: {
+      ...DEFAULT_EXPORT_SETTINGS,
+      ...(project.exportSettings || {})
+    },
     steps: updatedSteps
   };
+}
+
+function serializeStepForCompare(step: SopStep): string {
+  const copy: SopStep = JSON.parse(JSON.stringify(step));
+  return JSON.stringify(copy);
+}
+
+export function calculateHistoryChangeSummary(
+  previousSteps: SopStep[],
+  nextSteps: SopStep[]
+): SopHistoryChangeSummary {
+  const previousById = new Map(previousSteps.map((step) => [step.id, step]));
+  const nextById = new Map(nextSteps.map((step) => [step.id, step]));
+
+  let added = 0;
+  let removed = 0;
+  let updated = 0;
+
+  for (const [stepId, nextStep] of nextById.entries()) {
+    const previousStep = previousById.get(stepId);
+    if (!previousStep) {
+      added += 1;
+      continue;
+    }
+    if (serializeStepForCompare(previousStep) !== serializeStepForCompare(nextStep)) {
+      updated += 1;
+    }
+  }
+
+  for (const stepId of previousById.keys()) {
+    if (!nextById.has(stepId)) {
+      removed += 1;
+    }
+  }
+
+  return { added, removed, updated };
+}
+
+function incrementPatchVersion(version: string): string {
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)$/);
+  if (!match) return '1.0.0';
+
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  const patch = Number(match[3]);
+
+  return `${major}.${minor}.${patch + 1}`;
 }
 
 function loadInitialProjects(): { projects: SopProject[]; activeProject: SopProject | null } {
@@ -433,6 +489,10 @@ export const useSopStore = create<SopState>((set, get) => ({
         title: name?.trim() || 'Standard Operating Procedure',
         subtitle: description?.trim() || ''
       },
+      exportSettings: {
+        ...DEFAULT_EXPORT_SETTINGS
+      },
+      history: [],
       steps: []
     };
 
@@ -503,7 +563,7 @@ export const useSopStore = create<SopState>((set, get) => ({
 
     const targetId = retakeStepId || activeStepId;
     const exists = targetId
-      ? targetId === 'cover' || targetId === 'index' || normalized.steps.some((s) => s.id === targetId)
+      ? targetId === 'cover' || targetId === 'index' || targetId === 'history' || normalized.steps.some((s) => s.id === targetId)
       : false;
     const resolvedActiveStepId = exists
       ? targetId
@@ -674,11 +734,113 @@ export const useSopStore = create<SopState>((set, get) => ({
       p.id === updatedProject.id ? updatedProject : p
     );
 
+    scheduleProjectUpdateBroadcast(updatedProject, updatedProjects);
+    set({
+      activeProject: updatedProject,
+      projects: updatedProjects
+    });
+  },
+
+  publishProjectVersion: (summary: string) => {
+    const { activeProject, projects } = get();
+    if (!activeProject) return null;
+
+    const history = activeProject.history || [];
+    const previousSnapshot = history[0]?.snapshot;
+    const previousSteps = previousSnapshot?.steps || [];
+    const normalizedSummary = summary.trim() || 'Updated SOP content';
+
+    const nextVersion = incrementPatchVersion(activeProject.version || '1.0.0');
+    const now = new Date().toISOString();
+
+    const historyEntry: SopHistoryEntry = {
+      id: `hist-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      createdAt: now,
+      author: (activeProject.author || 'Team Member').trim() || 'Team Member',
+      version: nextVersion,
+      summary: normalizedSummary,
+      changeType: 'publish',
+      changeSummary: calculateHistoryChangeSummary(previousSteps, activeProject.steps),
+      snapshot: {
+        title: activeProject.name,
+        description: activeProject.description,
+        version: nextVersion,
+        status: 'published',
+        steps: JSON.parse(JSON.stringify(activeProject.steps))
+      }
+    };
+
+    const updatedProject: SopProject = {
+      ...activeProject,
+      version: nextVersion,
+      status: 'published',
+      history: [historyEntry, ...history],
+      updatedAt: now
+    };
+
+    const updatedProjects = projects.map((project) =>
+      project.id === updatedProject.id ? updatedProject : project
+    );
+
     broadcastProjectUpdate(updatedProject, updatedProjects);
     set({
       activeProject: updatedProject,
       projects: updatedProjects
     });
+
+    return historyEntry;
+  },
+
+  restoreProjectVersion: (historyEntryId: string) => {
+    const { activeProject, projects } = get();
+    if (!activeProject) return false;
+
+    const history = activeProject.history || [];
+    const restoreEntry = history.find((entry) => entry.id === historyEntryId);
+    if (!restoreEntry) return false;
+
+    const now = new Date().toISOString();
+    const restoredSteps = JSON.parse(JSON.stringify(restoreEntry.snapshot.steps)) as SopStep[];
+    const changeSummary = calculateHistoryChangeSummary(activeProject.steps, restoredSteps);
+
+    const rollbackEntry: SopHistoryEntry = {
+      id: `hist-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      createdAt: now,
+      author: (activeProject.author || 'Team Member').trim() || 'Team Member',
+      version: activeProject.version,
+      summary: `Restored version ${restoreEntry.version}`,
+      changeType: 'restore',
+      changeSummary,
+      snapshot: {
+        title: activeProject.name,
+        description: activeProject.description,
+        version: restoreEntry.version,
+        status: activeProject.status,
+        steps: restoredSteps
+      }
+    };
+
+    const updatedProject: SopProject = {
+      ...activeProject,
+      version: restoreEntry.version,
+      status: 'draft',
+      steps: restoredSteps,
+      history: [rollbackEntry, ...history],
+      updatedAt: now
+    };
+
+    const updatedProjects = projects.map((project) =>
+      project.id === updatedProject.id ? updatedProject : project
+    );
+
+    broadcastProjectUpdate(updatedProject, updatedProjects);
+    set({
+      activeProject: updatedProject,
+      projects: updatedProjects,
+      activeStepId: updatedProject.steps[0]?.id || 'cover'
+    });
+
+    return true;
   },
 
   updateCoverPageSettings: (settings: Partial<CoverPageSettings>) => {
@@ -701,7 +863,7 @@ export const useSopStore = create<SopState>((set, get) => ({
       p.id === updatedProject.id ? updatedProject : p
     );
 
-    broadcastProjectUpdate(updatedProject, updatedProjects);
+    scheduleProjectUpdateBroadcast(updatedProject, updatedProjects);
     set({
       activeProject: updatedProject,
       projects: updatedProjects

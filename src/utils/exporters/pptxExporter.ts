@@ -3,6 +3,10 @@ import { DEFAULT_COVER_PAGE_SETTINGS, type SopProject, type CalloutType } from '
 import { renderAnnotatedImage, prepareExportProject, getSafeFileName } from './imageHelper';
 import { stripMarkdown } from '../markdownHelper';
 
+interface ExportContentOptions {
+  includeChangelog?: boolean;
+}
+
 /**
  * Strips '#' from hex color strings and ensures 6 characters
  */
@@ -34,10 +38,80 @@ function getCalloutTheme(type?: CalloutType): { bg: string; border: string; labe
   }
 }
 
+function formatDateLabel(value?: string): string {
+  if (!value) return 'N/A';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString();
+}
+
+function buildChangedStepsLabel(
+  currentSteps: Array<{ id: string; order: number; title: string }>,
+  previousSteps: Array<{ id: string; order: number; title: string }>
+): string {
+  const previousMap = new Map(previousSteps.map((step) => [step.id, step]));
+  const currentMap = new Map(currentSteps.map((step) => [step.id, step]));
+
+  const added: string[] = [];
+  const removed: string[] = [];
+  const updated: string[] = [];
+
+  for (const step of currentSteps) {
+    const previousStep = previousMap.get(step.id);
+    const label = `S${step.order}`;
+    if (!previousStep) {
+      added.push(label);
+      continue;
+    }
+    if (JSON.stringify(previousStep) !== JSON.stringify(step)) {
+      updated.push(label);
+    }
+  }
+
+  for (const previousStep of previousSteps) {
+    if (!currentMap.has(previousStep.id)) {
+      removed.push(`S${previousStep.order}`);
+    }
+  }
+
+  const parts: string[] = [];
+  if (added.length) parts.push(`Added ${added.join(', ')}`);
+  if (updated.length) parts.push(`Updated ${updated.join(', ')}`);
+  if (removed.length) parts.push(`Removed ${removed.join(', ')}`);
+  return parts.join(' | ') || 'No step-level changes';
+}
+
+function buildChangelogRows(project: SopProject): Array<{ date: string; editor: string; changedSteps: string; summary: string }> {
+  const history = project.history || [];
+  if (history.length === 0) {
+    return [
+      {
+        date: formatDateLabel(project.updatedAt || project.createdAt),
+        editor: project.author || 'Team Member',
+        changedSteps: 'No published history yet',
+        summary: 'Initial draft state'
+      }
+    ];
+  }
+
+  return history.map((entry, index) => {
+    const previousEntry = history[index + 1];
+    const previousSteps = previousEntry?.snapshot.steps || [];
+
+    return {
+      date: formatDateLabel(entry.createdAt),
+      editor: entry.author || project.author || 'Team Member',
+      changedSteps: buildChangedStepsLabel(entry.snapshot.steps, previousSteps),
+      summary: entry.summary || 'Updated SOP content'
+    };
+  });
+}
+
 /**
  * Builds the PPTX Presentation instance
  */
-export async function buildPptxPresentation(project: SopProject): Promise<PptxGenJS> {
+export async function buildPptxPresentation(project: SopProject, options: ExportContentOptions = {}): Promise<PptxGenJS> {
+  const { includeChangelog = true } = options;
   const pptx = new PptxGenJS();
 
   // 16:9 widescreen layout: 10.0" x 5.625"
@@ -422,8 +496,174 @@ export async function buildPptxPresentation(project: SopProject): Promise<PptxGe
     }
   }
 
+  if (includeChangelog) {
+    // ==========================================
+    // 3. CHANGELOG TABLE SLIDE(S)
+    // ==========================================
+    const changelogRows = buildChangelogRows(project);
+    const changelogRowsPerSlide = 9;
+    const changelogPages = Math.max(1, Math.ceil(changelogRows.length / changelogRowsPerSlide));
+
+    for (let page = 0; page < changelogPages; page++) {
+      const pageRows = changelogRows.slice(page * changelogRowsPerSlide, (page + 1) * changelogRowsPerSlide);
+      const changelogSlide = pptx.addSlide({ masterName: 'MASTER_STEPFLOW' });
+
+    changelogSlide.addShape('roundRect', {
+      x: 0.8,
+      y: 0.45,
+      w: 2.2,
+      h: 0.28,
+      fill: { color: primaryHex },
+      rectRadius: 0.05,
+    });
+    const changelogHeader = changelogPages > 1
+      ? `CHANGELOG (${page + 1}/${changelogPages})`
+      : 'CHANGELOG';
+    changelogSlide.addText(changelogHeader, {
+      x: 0.8,
+      y: 0.45,
+      w: 2.2,
+      h: 0.28,
+      fontSize: 8,
+      bold: true,
+      color: 'FFFFFF',
+      align: 'center',
+      valign: 'middle',
+      fontFace,
+    });
+
+    changelogSlide.addText('Document Revision Log', {
+      x: 0.8,
+      y: 0.82,
+      w: 8.4,
+      h: 0.4,
+      fontSize: 20,
+      bold: true,
+      color: primaryHex,
+      fontFace,
+      valign: 'top',
+    });
+
+    const tableX = 0.8;
+    const tableY = 1.35;
+    const tableW = 8.4;
+    const headerH = 0.34;
+    const rowH = 0.38;
+
+    const dateW = 1.7;
+    const editorW = 1.3;
+    const changedW = 2.1;
+    const summaryW = tableW - dateW - editorW - changedW;
+
+    changelogSlide.addShape('rect', {
+      x: tableX,
+      y: tableY,
+      w: tableW,
+      h: headerH,
+      fill: { color: 'F1F5F9' },
+      line: { color: 'E2E8F0', width: 1 }
+    });
+
+    const headerFont = 8;
+    changelogSlide.addText('CHANGE DATE', {
+      x: tableX + 0.06,
+      y: tableY + 0.08,
+      w: dateW - 0.08,
+      h: 0.2,
+      fontSize: headerFont,
+      bold: true,
+      color: '475569',
+      fontFace,
+    });
+    changelogSlide.addText('EDITOR', {
+      x: tableX + dateW + 0.06,
+      y: tableY + 0.08,
+      w: editorW - 0.08,
+      h: 0.2,
+      fontSize: headerFont,
+      bold: true,
+      color: '475569',
+      fontFace,
+    });
+    changelogSlide.addText('CHANGED STEPS', {
+      x: tableX + dateW + editorW + 0.06,
+      y: tableY + 0.08,
+      w: changedW - 0.08,
+      h: 0.2,
+      fontSize: headerFont,
+      bold: true,
+      color: '475569',
+      fontFace,
+    });
+    changelogSlide.addText('PUBLISH SUMMARY', {
+      x: tableX + dateW + editorW + changedW + 0.06,
+      y: tableY + 0.08,
+      w: summaryW - 0.08,
+      h: 0.2,
+      fontSize: headerFont,
+      bold: true,
+      color: '475569',
+      fontFace,
+    });
+
+      pageRows.forEach((row, idx) => {
+        const rowY = tableY + headerH + idx * rowH;
+        changelogSlide.addShape('rect', {
+        x: tableX,
+        y: rowY,
+        w: tableW,
+        h: rowH,
+        fill: { color: idx % 2 === 0 ? 'FFFFFF' : 'F8FAFC' },
+        line: { color: 'E2E8F0', width: 0.75 }
+      });
+
+        const cellFont = 8;
+        changelogSlide.addText(row.date, {
+        x: tableX + 0.06,
+        y: rowY + 0.08,
+        w: dateW - 0.08,
+        h: rowH - 0.12,
+        fontSize: cellFont,
+        color: '1E293B',
+        fontFace,
+        fit: 'shrink'
+      });
+        changelogSlide.addText(row.editor, {
+        x: tableX + dateW + 0.06,
+        y: rowY + 0.08,
+        w: editorW - 0.08,
+        h: rowH - 0.12,
+        fontSize: cellFont,
+        color: '1E293B',
+        fontFace,
+        fit: 'shrink'
+      });
+        changelogSlide.addText(row.changedSteps, {
+        x: tableX + dateW + editorW + 0.06,
+        y: rowY + 0.08,
+        w: changedW - 0.08,
+        h: rowH - 0.12,
+        fontSize: cellFont,
+        color: '1E293B',
+        fontFace,
+        fit: 'shrink'
+      });
+        changelogSlide.addText(row.summary, {
+        x: tableX + dateW + editorW + changedW + 0.06,
+        y: rowY + 0.08,
+        w: summaryW - 0.08,
+        h: rowH - 0.12,
+        fontSize: cellFont,
+        color: '1E293B',
+        fontFace,
+        fit: 'shrink'
+      });
+      });
+    }
+  }
+
   // ==========================================
-  // 3. STEP SLIDES
+  // 4. STEP SLIDES
   // ==========================================
   for (const step of sortedSteps) {
     if (step.type === 'text_only') {
@@ -732,11 +972,12 @@ export async function buildPptxPresentation(project: SopProject): Promise<PptxGe
  * Supports Electron save dialog or browser download.
  */
 export async function exportToPptx(
-  project: SopProject
+  project: SopProject,
+  options: ExportContentOptions = {}
 ): Promise<{ success: boolean; filePath?: string; error?: string }> {
   try {
     const preparedProject = await prepareExportProject(project);
-    const pptx = await buildPptxPresentation(preparedProject);
+    const pptx = await buildPptxPresentation(preparedProject, options);
     const safeName = getSafeFileName(project.name, 'pptx');
 
     // 1. Electron bridge support

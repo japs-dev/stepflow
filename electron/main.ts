@@ -41,6 +41,14 @@ let lastActiveProject: SopProject | null = null;
 let currentRetakeStepId: string | null = null;
 let isAppQuitting = false;
 
+// Some Windows environments fail Chromium GPU initialization in packaged builds.
+// Force software rendering to keep the app launchable after installation.
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('disable-gpu');
+app.commandLine.appendSwitch('disable-gpu-compositing');
+app.commandLine.appendSwitch('in-process-gpu');
+app.commandLine.appendSwitch('use-angle', 'swiftshader');
+
 app.on('before-quit', () => {
   isAppQuitting = true;
 });

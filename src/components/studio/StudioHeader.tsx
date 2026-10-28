@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   ArrowLeft,
   Camera,
@@ -42,6 +42,11 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
   const [exportFeedback, setExportFeedback] = useState<string | null>(null);
 
   if (!activeProject) return null;
+
+  const includeChangelog = useMemo(
+    () => activeProject.exportSettings?.includeChangelog !== false,
+    [activeProject.exportSettings?.includeChangelog]
+  );
 
   const handleTitleSubmit = () => {
     if (titleValue.trim() && titleValue !== activeProject.name) {
@@ -119,13 +124,13 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
     try {
       let res: { success: boolean; filePath?: string; error?: string } = { success: false };
       if (type === 'pdf') {
-        res = await exportToPdf(activeProject);
+        res = await exportToPdf(activeProject, { includeChangelog });
       } else if (type === 'pptx') {
-        res = await exportToPptx(activeProject);
+        res = await exportToPptx(activeProject, { includeChangelog });
       } else if (type === 'html') {
-        res = await exportToHtml(activeProject);
+        res = await exportToHtml(activeProject, { includeChangelog });
       } else if (type === 'markdown') {
-        res = await exportToMarkdown(activeProject);
+        res = await exportToMarkdown(activeProject, { includeChangelog });
       } else if (type === 'bundle') {
         if (typeof window !== 'undefined' && window.electronAPI?.exportProjectBundle) {
           res = await window.electronAPI.exportProjectBundle(activeProject);

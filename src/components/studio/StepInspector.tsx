@@ -1,9 +1,12 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   Camera,
   Crop,
   Trash2,
   Sliders,
+  Palette,
+  Upload,
+  Check,
   AlertTriangle,
   Lightbulb,
   Info,
@@ -11,6 +14,7 @@ import {
   Sparkles,
   BookOpen,
   ListOrdered,
+  History,
   Layers,
   Building2,
   PanelRight
@@ -19,7 +23,8 @@ import { useSopStore } from '../../store/useSopStore';
 import { CalloutType, DEFAULT_COVER_PAGE_SETTINGS } from '../../types/sop';
 import { RichInstructionsEditor } from './RichInstructionsEditor';
 import { getCmdLabel } from '../../utils/platform';
-import { DEFAULT_THEME } from '../../store/sampleData';
+import { DEFAULT_THEME, SAMSUNG_THEME } from '../../store/sampleData';
+import { COLOR_PRESETS, GRADIENT_PRESETS } from './CoverPageStudio';
 
 interface StepInspectorProps {
   onTriggerCapture?: (mode?: 'fullscreen' | 'selection') => void;
@@ -45,12 +50,77 @@ export const StepInspector: React.FC<StepInspectorProps> = ({
   } = useSopStore();
 
   const [showBeautifySettings, setShowBeautifySettings] = useState(false);
+  const coverImageInputRef = useRef<HTMLInputElement | null>(null);
+  const [coverUploadError, setCoverUploadError] = useState<string | null>(null);
   const cmdLabel = getCmdLabel();
 
   if (!activeProject) return null;
 
   if (activeStepId === 'cover') {
     const cover = activeProject.coverPage || DEFAULT_COVER_PAGE_SETTINGS;
+
+    const applySamsungTheme = (variant: 'neutral' | 'vibrant') => {
+      const isNeutral = variant === 'neutral';
+
+      updateProjectDetails({
+        theme: {
+          ...(activeProject.theme || DEFAULT_THEME),
+          ...SAMSUNG_THEME,
+          accentColor: isNeutral ? '#00C3B2' : '#0077C8',
+          logoPath: activeProject.theme?.logoPath,
+          beautifySettings: {
+            ...SAMSUNG_THEME.beautifySettings,
+            backgroundType: 'solid',
+            backgroundColor: isNeutral ? '#F2F4F7' : '#FFFFFF',
+            shadowBlur: isNeutral ? 14 : 18,
+          },
+        },
+      });
+
+      updateCoverPageSettings({
+        backgroundType: isNeutral ? 'color' : 'gradient',
+        backgroundColor: isNeutral ? '#F2F4F7' : '#1428A0',
+        backgroundGradient: isNeutral
+          ? 'linear-gradient(135deg, #F2F4F7 0%, #FFFFFF 100%)'
+          : 'linear-gradient(135deg, #1428A0 0%, #0077C8 55%, #00B3E3 100%)',
+        textColor: isNeutral ? '#000000' : '#ffffff',
+      });
+    };
+
+    const handleCoverImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      if (file.size > 5 * 1024 * 1024) {
+        setCoverUploadError('Cover image must be smaller than 5 MB.');
+        setTimeout(() => setCoverUploadError(null), 4000);
+        e.target.value = '';
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = async (uploadEvent) => {
+        const dataUrl = uploadEvent.target?.result as string;
+        if (dataUrl) {
+          let finalImage = dataUrl;
+          if (typeof window !== 'undefined' && window.electronAPI?.importPastedImage) {
+            try {
+              finalImage = await window.electronAPI.importPastedImage(dataUrl);
+            } catch (err) {
+              console.warn('Failed to save cover image to assets folder:', err);
+            }
+          }
+          updateCoverPageSettings({
+            backgroundType: 'image',
+            backgroundImage: finalImage,
+            backgroundOverlayOpacity: cover.backgroundOverlayOpacity || 0.45,
+          });
+        }
+      };
+
+      reader.readAsDataURL(file);
+      e.target.value = '';
+    };
 
     return (
       <aside
@@ -106,15 +176,37 @@ export const StepInspector: React.FC<StepInspectorProps> = ({
             </label>
           </div>
 
-          {/* Background Type */}
-          <div className="space-y-1.5">
-            <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">
-              Background Type
+          {/* Cover Background (merged from center panel) */}
+          <div className="space-y-2 pt-2 border-t border-zinc-200/80 dark:border-zinc-800">
+            <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
+              <Palette className="w-3 h-3 text-blue-500" />
+              <span>Cover Background</span>
             </label>
+
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                type="button"
+                onClick={() => applySamsungTheme('neutral')}
+                className="rounded-md border border-zinc-300 dark:border-zinc-700 bg-gradient-to-r from-[#000000] via-[#595D63] to-[#F2F4F7] px-2.5 py-1.5 text-left text-[11px] font-semibold text-white shadow-xs hover:opacity-95 cursor-pointer"
+                title="Apply Samsung Neutral theme"
+              >
+                Samsung Neutral
+              </button>
+              <button
+                type="button"
+                onClick={() => applySamsungTheme('vibrant')}
+                className="rounded-md border border-[#1428A0]/40 bg-gradient-to-r from-[#1428A0] via-[#0077C8] to-[#00B3E3] px-2.5 py-1.5 text-left text-[11px] font-semibold text-white shadow-xs hover:opacity-95 cursor-pointer"
+                title="Apply Samsung Vibrant theme"
+              >
+                Samsung Vibrant
+              </button>
+            </div>
+
             <div className="grid grid-cols-3 gap-1 p-1 bg-zinc-200/60 dark:bg-zinc-800 rounded-lg">
               {(['gradient', 'color', 'image'] as const).map((type) => (
                 <button
                   key={type}
+                  type="button"
                   onClick={() => updateCoverPageSettings({ backgroundType: type })}
                   className={`py-1 text-[11px] font-semibold rounded capitalize transition-all cursor-pointer ${
                     cover.backgroundType === type
@@ -126,6 +218,166 @@ export const StepInspector: React.FC<StepInspectorProps> = ({
                 </button>
               ))}
             </div>
+
+            {cover.backgroundType === 'gradient' && (
+              <div className="grid grid-cols-2 gap-1.5">
+                {GRADIENT_PRESETS.map((grad) => {
+                  const isSelected = cover.backgroundGradient === grad.value;
+                  return (
+                    <button
+                      key={grad.name}
+                      type="button"
+                      onClick={() =>
+                        updateCoverPageSettings({
+                          backgroundGradient: grad.value,
+                          textColor: grad.textColor,
+                        })
+                      }
+                      style={{ background: grad.value }}
+                      className={`h-10 rounded-md p-2 flex items-end justify-between border transition-transform cursor-pointer hover:scale-[1.02] ${
+                        isSelected
+                          ? 'border-blue-500 ring-1 ring-blue-500/50'
+                          : 'border-white/20'
+                      }`}
+                    >
+                      <span
+                        style={{ color: grad.textColor }}
+                        className="text-[9px] font-bold truncate"
+                      >
+                        {grad.name}
+                      </span>
+                      {isSelected && <Check style={{ color: grad.textColor }} className="w-3 h-3 shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {cover.backgroundType === 'color' && (
+              <div className="space-y-1.5">
+                <div className="grid grid-cols-4 gap-1.5">
+                  {COLOR_PRESETS.map((col) => {
+                    const isSelected =
+                      (cover.backgroundColor || '#0f172a').toLowerCase() === col.value.toLowerCase();
+                    return (
+                      <button
+                        key={col.name}
+                        type="button"
+                        onClick={() =>
+                          updateCoverPageSettings({
+                            backgroundColor: col.value,
+                            textColor: col.textColor,
+                          })
+                        }
+                        style={{ backgroundColor: col.value }}
+                        title={col.name}
+                        className={`h-7 rounded-md border flex items-center justify-center transition-transform cursor-pointer hover:scale-105 ${
+                          isSelected
+                            ? 'border-blue-500 ring-1 ring-blue-500/50'
+                            : 'border-zinc-300 dark:border-zinc-700'
+                        }`}
+                      >
+                        {isSelected && <Check style={{ color: col.textColor }} className="w-3 h-3" />}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="color"
+                    value={cover.backgroundColor || '#0f172a'}
+                    onChange={(e) => updateCoverPageSettings({ backgroundColor: e.target.value })}
+                    className="w-7 h-7 rounded border border-zinc-200 dark:border-zinc-700 cursor-pointer p-0.5 bg-transparent"
+                  />
+                  <input
+                    type="text"
+                    value={cover.backgroundColor || '#0f172a'}
+                    onChange={(e) => updateCoverPageSettings({ backgroundColor: e.target.value })}
+                    className="flex-1 px-2 py-1 text-xs font-mono rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100"
+                    placeholder="#0f172a"
+                  />
+                </div>
+              </div>
+            )}
+
+            {cover.backgroundType === 'image' && (
+              <div className="space-y-2">
+                {coverUploadError && (
+                  <div className="text-[11px] text-rose-500 font-medium px-2 py-1.5 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 rounded-md">
+                    {coverUploadError}
+                  </div>
+                )}
+
+                <input
+                  ref={coverImageInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleCoverImageUpload}
+                  className="hidden"
+                />
+
+                {cover.backgroundImage ? (
+                  <>
+                    <div className="relative h-24 rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-700 group">
+                      <img src={cover.backgroundImage} alt="Cover background" className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => coverImageInputRef.current?.click()}
+                          className="px-2 py-1 bg-white text-zinc-900 rounded text-[11px] font-medium hover:bg-zinc-100 cursor-pointer"
+                        >
+                          Replace
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateCoverPageSettings({
+                              backgroundImage: undefined,
+                              backgroundType: 'gradient',
+                            })
+                          }
+                          className="p-1 bg-red-600 text-white rounded hover:bg-red-500 cursor-pointer"
+                          title="Remove image"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-[10px] text-zinc-500">
+                        <span>Readability Overlay</span>
+                        <span className="font-mono text-zinc-800 dark:text-zinc-200">
+                          {Math.round((cover.backgroundOverlayOpacity ?? 0.45) * 100)}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="0.85"
+                        step="0.05"
+                        value={cover.backgroundOverlayOpacity ?? 0.45}
+                        onChange={(e) =>
+                          updateCoverPageSettings({
+                            backgroundOverlayOpacity: parseFloat(e.target.value),
+                          })
+                        }
+                        className="w-full h-1.5 bg-zinc-200 dark:bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => coverImageInputRef.current?.click()}
+                    className="w-full flex flex-col items-center justify-center p-3 border-2 border-dashed border-zinc-200 dark:border-zinc-700 hover:border-blue-500 rounded-lg bg-zinc-50/50 dark:bg-zinc-800/40 transition-all cursor-pointer"
+                  >
+                    <Upload className="w-4 h-4 text-zinc-400 mb-1" />
+                    <span className="text-[11px] font-semibold text-zinc-700 dark:text-zinc-300">Upload Image</span>
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Layout Style */}
@@ -291,6 +543,59 @@ export const StepInspector: React.FC<StepInspectorProps> = ({
           <div className="p-3 rounded-lg bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200/60 dark:border-blue-900/60 text-xs text-blue-900 dark:text-blue-300">
             <span className="font-semibold block mb-1">Index Scope</span>
             <span>Lists all {activeProject.steps.length} sequential steps with visual and text indicators.</span>
+          </div>
+        </div>
+      </aside>
+    );
+  }
+
+  if (activeStepId === 'history') {
+    const historyCount = activeProject.history?.length || 0;
+    const latestEntry = activeProject.history?.[0];
+
+    return (
+      <aside
+        style={{ width }}
+        className="border-l border-zinc-200/80 dark:border-zinc-800/80 bg-zinc-50/50 dark:bg-zinc-900/50 flex flex-col h-full select-none shrink-0 overflow-y-auto"
+      >
+        <div className="h-10 px-3.5 border-b border-zinc-200/80 dark:border-zinc-800/80 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider uppercase">
+            <History className="w-3.5 h-3.5" />
+            <span>SOP History</span>
+          </div>
+          {onToggleCollapse && (
+            <button
+              type="button"
+              onClick={onToggleCollapse}
+              className="p-1 rounded-md hover:bg-zinc-200/60 dark:hover:bg-zinc-800 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors cursor-pointer"
+              title={`Collapse Step Inspector (${cmdLabel}+I)`}
+            >
+              <PanelRight className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        <div className="p-3.5 space-y-3 text-xs">
+          <div className="rounded-lg border border-zinc-200/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-3">
+            <div className="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold">Total Versions</div>
+            <div className="mt-1 text-lg font-bold text-zinc-900 dark:text-zinc-100">{historyCount}</div>
+          </div>
+
+          <div className="rounded-lg border border-zinc-200/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-3">
+            <div className="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold">Current SOP Version</div>
+            <div className="mt-1 text-sm font-semibold text-zinc-900 dark:text-zinc-100">v{activeProject.version}</div>
+          </div>
+
+          <div className="rounded-lg border border-zinc-200/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 p-3">
+            <div className="text-[11px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400 font-semibold">Latest Entry</div>
+            {latestEntry ? (
+              <>
+                <div className="mt-1 text-sm font-semibold text-zinc-900 dark:text-zinc-100">v{latestEntry.version}</div>
+                <div className="mt-1 text-zinc-600 dark:text-zinc-300">{latestEntry.summary}</div>
+              </>
+            ) : (
+              <div className="mt-1 text-zinc-500 dark:text-zinc-400">No history entries yet.</div>
+            )}
           </div>
         </div>
       </aside>

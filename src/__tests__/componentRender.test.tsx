@@ -24,6 +24,7 @@ import { CenterViewport } from '../components/studio/CenterViewport';
 import { StepInspector } from '../components/studio/StepInspector';
 import { CoverPageStudio } from '../components/studio/CoverPageStudio';
 import { TableOfContentsStudio } from '../components/studio/TableOfContentsStudio';
+import { SopHistoryStudio } from '../components/studio/SopHistoryStudio';
 import { FloatingDot } from '../components/overlay/FloatingDot';
 import { ErrorBoundary } from '../components/common/ErrorBoundary';
 
@@ -82,6 +83,12 @@ describe('Component Render & Hook Invariants', () => {
   it('renders TableOfContentsStudio without hook violations', () => {
     expect(() => {
       ReactDOMServer.renderToString(<TableOfContentsStudio />);
+    }).not.toThrow();
+  });
+
+  it('renders SopHistoryStudio without hook violations', () => {
+    expect(() => {
+      ReactDOMServer.renderToString(<SopHistoryStudio />);
     }).not.toThrow();
   });
 

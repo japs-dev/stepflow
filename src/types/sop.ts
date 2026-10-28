@@ -84,6 +84,33 @@ export interface SopStep {
   image?: StepImageData;
 }
 
+export type SopHistoryChangeType = 'publish' | 'restore';
+
+export interface SopHistoryChangeSummary {
+  added: number;
+  removed: number;
+  updated: number;
+}
+
+export interface SopHistorySnapshot {
+  title: string;
+  description?: string;
+  version: string;
+  status: SopProject['status'];
+  steps: SopStep[];
+}
+
+export interface SopHistoryEntry {
+  id: string;
+  createdAt: string;
+  author: string;
+  version: string;
+  summary: string;
+  changeType: SopHistoryChangeType;
+  changeSummary: SopHistoryChangeSummary;
+  snapshot: SopHistorySnapshot;
+}
+
 export interface BeautifySettings {
   enabled: boolean;
   padding: number;
@@ -127,6 +154,10 @@ export interface CoverPageSettings {
   logoUrl?: string;
 }
 
+export interface ExportSettings {
+  includeChangelog: boolean;
+}
+
 export const DEFAULT_COVER_PAGE_SETTINGS: CoverPageSettings = {
   enabled: true,
   layout: 'modern',
@@ -140,6 +171,10 @@ export const DEFAULT_COVER_PAGE_SETTINGS: CoverPageSettings = {
   showAuthor: true,
   showOrganization: true,
   showTableOfContents: true
+};
+
+export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
+  includeChangelog: true
 };
 
 export interface SopProject {
@@ -157,6 +192,8 @@ export interface SopProject {
   updatedAt: string;
   theme: ProjectTheme;
   coverPage?: CoverPageSettings;
+  exportSettings?: ExportSettings;
+  history?: SopHistoryEntry[];
   steps: SopStep[];
 }
 
