@@ -30,6 +30,7 @@ export interface SopState {
   recentCapture: string | null;
   lastDeletedStep: { step: SopStep; index: number } | null;
   retakeStepId: string | null;
+  selectedHistoryEntryId: string | null;
 
   // Error FAQ State
   errorFaqItems: ErrorFaqItem[];
@@ -71,6 +72,7 @@ export interface SopState {
   updateBeautifySettings: (settings: Partial<BeautifySettings>) => void;
   setActiveView: (view: 'library' | 'studio' | 'overlay') => void;
   setActiveStepId: (stepId: string | null) => void;
+  setSelectedHistoryEntryId: (id: string | null) => void;
   setIsCapturing: (capturing: boolean) => void;
   setRecentCapture: (capture: string | null) => void;
 }
@@ -326,7 +328,7 @@ export function calculateHistoryChangeSummary(
   return { added, removed, updated };
 }
 
-function incrementPatchVersion(version: string): string {
+export function incrementPatchVersion(version: string): string {
   const match = version.match(/^(\d+)\.(\d+)\.(\d+)$/);
   if (!match) return '1.0.0';
 
@@ -382,6 +384,7 @@ export const useSopStore = create<SopState>((set, get) => ({
   recentCapture: null,
   lastDeletedStep: null,
   retakeStepId: null,
+  selectedHistoryEntryId: null,
 
   // Error FAQ State
   errorFaqItems: [],
@@ -785,7 +788,8 @@ export const useSopStore = create<SopState>((set, get) => ({
     broadcastProjectUpdate(updatedProject, updatedProjects);
     set({
       activeProject: updatedProject,
-      projects: updatedProjects
+      projects: updatedProjects,
+      selectedHistoryEntryId: historyEntry.id
     });
 
     return historyEntry;
@@ -837,6 +841,7 @@ export const useSopStore = create<SopState>((set, get) => ({
     set({
       activeProject: updatedProject,
       projects: updatedProjects,
+      selectedHistoryEntryId: rollbackEntry.id,
       activeStepId: updatedProject.steps[0]?.id || 'cover'
     });
 
@@ -1226,6 +1231,10 @@ export const useSopStore = create<SopState>((set, get) => ({
 
   setActiveStepId: (stepId: string | null) => {
     set({ activeStepId: stepId });
+  },
+
+  setSelectedHistoryEntryId: (id: string | null) => {
+    set({ selectedHistoryEntryId: id });
   },
 
   setIsCapturing: (capturing: boolean) => {

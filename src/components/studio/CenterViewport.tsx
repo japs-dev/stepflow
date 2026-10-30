@@ -555,7 +555,7 @@ export const CenterViewport: React.FC<CenterViewportProps> = ({
                 </button>
               )}
               <span className="font-semibold text-zinc-900 dark:text-zinc-100 text-[11px] uppercase tracking-wider">
-                SOP Changelog
+                SOP History
               </span>
             </div>
             {!rightOpen && onOpenRight && (
