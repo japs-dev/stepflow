@@ -25,6 +25,7 @@ import { RichInstructionsEditor } from './RichInstructionsEditor';
 import { getCmdLabel } from '../../utils/platform';
 import { DEFAULT_THEME, SAMSUNG_THEME } from '../../store/sampleData';
 import { COLOR_PRESETS, GRADIENT_PRESETS } from './CoverPageStudio';
+import { Switch } from '../common/Switch';
 
 interface StepInspectorProps {
   onTriggerCapture?: (mode?: 'fullscreen' | 'selection') => void;
@@ -145,39 +146,8 @@ export const StepInspector: React.FC<StepInspectorProps> = ({
         </div>
 
         <div className="p-3.5 space-y-4 text-xs">
-          {/* Cover Enable */}
-          <div className="flex items-center justify-between p-2.5 rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200/80 dark:border-zinc-700 shadow-xs">
-            <span className="font-semibold text-zinc-900 dark:text-zinc-100">Cover Page</span>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={cover.enabled}
-                onChange={(e) => updateCoverPageSettings({ enabled: e.target.checked })}
-                className="sr-only peer"
-              />
-              <div className="w-8 h-4.5 bg-zinc-200 peer-focus:outline-none rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-blue-600"></div>
-            </label>
-          </div>
-
-          {/* Table of Contents / Index Toggle */}
-          <div className="flex items-center justify-between p-2.5 rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200/80 dark:border-zinc-700 shadow-xs">
-            <div className="flex items-center gap-1.5">
-              <ListOrdered className="w-3.5 h-3.5 text-indigo-500" />
-              <span className="font-semibold text-zinc-900 dark:text-zinc-100">Index Page</span>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={cover.showTableOfContents}
-                onChange={(e) => updateCoverPageSettings({ showTableOfContents: e.target.checked })}
-                className="sr-only peer"
-              />
-              <div className="w-8 h-4.5 bg-zinc-200 peer-focus:outline-none rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-blue-600"></div>
-            </label>
-          </div>
-
           {/* Cover Background (merged from center panel) */}
-          <div className="space-y-2 pt-2 border-t border-zinc-200/80 dark:border-zinc-800">
+          <div className="space-y-2">
             <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
               <Palette className="w-3 h-3 text-blue-500" />
               <span>Cover Background</span>
@@ -527,19 +497,6 @@ export const StepInspector: React.FC<StepInspectorProps> = ({
         </div>
 
         <div className="p-3.5 space-y-4 text-xs">
-          <div className="flex items-center justify-between p-2.5 rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200/80 dark:border-zinc-700 shadow-xs">
-            <span className="font-semibold text-zinc-900 dark:text-zinc-100">Include Index</span>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={cover.showTableOfContents}
-                onChange={(e) => updateCoverPageSettings({ showTableOfContents: e.target.checked })}
-                className="sr-only peer"
-              />
-              <div className="w-8 h-4.5 bg-zinc-200 peer-focus:outline-none rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-blue-600"></div>
-            </label>
-          </div>
-
           <div className="p-3 rounded-lg bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200/60 dark:border-blue-900/60 text-xs text-blue-900 dark:text-blue-300">
             <span className="font-semibold block mb-1">Index Scope</span>
             <span>Lists all {activeProject.steps.length} sequential steps with visual and text indicators.</span>
@@ -855,13 +812,14 @@ export const StepInspector: React.FC<StepInspectorProps> = ({
                     <span className="text-[11px] text-zinc-600 dark:text-zinc-400">
                       Enable Frame
                     </span>
-                    <input
-                      type="checkbox"
+                    <Switch
+                      size="sm"
                       checked={beautify.enabled}
-                      onChange={(e) =>
-                        updateBeautifySettings({ enabled: e.target.checked })
+                      onChange={(checked) =>
+                        updateBeautifySettings({ enabled: checked })
                       }
-                      className="rounded border-zinc-300"
+                      title="Enable Beautify Frame"
+                      ariaLabel="Enable Beautify Frame"
                     />
                   </div>
 

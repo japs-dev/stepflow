@@ -583,6 +583,47 @@ export async function prepareExportProject(project: SopProject): Promise<SopProj
     }
   }
 
+  // 4. Convert cover page gradient to high-res Base64 image so PDF renders the exact gradient
+  if (
+    project.coverPage?.backgroundType === 'gradient' &&
+    typeof document !== 'undefined'
+  ) {
+    try {
+      const gradientCanvas = document.createElement('canvas');
+      gradientCanvas.width = 1190;
+      gradientCanvas.height = 1684;
+      const ctx = gradientCanvas.getContext('2d');
+      if (ctx) {
+        const gradStr =
+          project.coverPage.backgroundGradient ||
+          'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%)';
+        const grad = ctx.createLinearGradient(0, 0, gradientCanvas.width, gradientCanvas.height);
+        const colorRegex = /(#[0-9a-fA-F]{3,8}|rgba?\([^)]+\))\s*(\d+%)?/g;
+        const matches = Array.from(gradStr.matchAll(colorRegex));
+        if (matches.length > 0) {
+          matches.forEach((m, idx) => {
+            const color = m[1];
+            const stopPct = m[2] ? parseInt(m[2], 10) / 100 : idx / Math.max(1, matches.length - 1);
+            grad.addColorStop(Math.min(1, Math.max(0, stopPct)), color);
+          });
+        } else {
+          grad.addColorStop(0, '#0f172a');
+          grad.addColorStop(1, '#1e293b');
+        }
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, gradientCanvas.width, gradientCanvas.height);
+        preparedCoverPage = {
+          ...preparedCoverPage,
+          backgroundImage: gradientCanvas.toDataURL('image/jpeg', 0.95),
+        };
+      }
+      gradientCanvas.width = 0;
+      gradientCanvas.height = 0;
+    } catch (gradErr) {
+      console.warn('[prepareExportProject] Failed to rasterize cover gradient:', gradErr);
+    }
+  }
+
   return {
     ...project,
     coverPage: preparedCoverPage,

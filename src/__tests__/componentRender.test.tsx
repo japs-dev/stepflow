@@ -27,6 +27,7 @@ import { TableOfContentsStudio } from '../components/studio/TableOfContentsStudi
 import { SopHistoryStudio } from '../components/studio/SopHistoryStudio';
 import { FloatingDot } from '../components/overlay/FloatingDot';
 import { ErrorBoundary } from '../components/common/ErrorBoundary';
+import { Switch } from '../components/common/Switch';
 
 describe('Component Render & Hook Invariants', () => {
   it('renders ErrorBoundary', () => {
@@ -96,6 +97,20 @@ describe('Component Render & Hook Invariants', () => {
     expect(() => {
       ReactDOMServer.renderToString(<FloatingDot />);
     }).not.toThrow();
+  });
+
+  it('renders Switch in on and off states without violations', () => {
+    const htmlOn = ReactDOMServer.renderToString(
+      <Switch checked={true} onChange={() => {}} title="On Switch" />
+    );
+    expect(htmlOn).toContain('role="switch"');
+    expect(htmlOn).toContain('aria-checked="true"');
+
+    const htmlOff = ReactDOMServer.renderToString(
+      <Switch checked={false} onChange={() => {}} title="Off Switch" size="sm" />
+    );
+    expect(htmlOff).toContain('role="switch"');
+    expect(htmlOff).toContain('aria-checked="false"');
   });
 
   it('renders App without hook violations', () => {

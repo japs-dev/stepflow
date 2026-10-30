@@ -188,9 +188,17 @@ export async function buildPdfDocument(project: SopProject, options: ExportConte
   // 1. FRONT COVER PAGE (PAGE 1)
   // ==========================================
   if (hasCoverPage) {
+    const isGradientLight =
+      cover.backgroundType === 'gradient' &&
+      Boolean(
+        cover.backgroundGradient?.toLowerCase().includes('#ffffff') ||
+        cover.backgroundGradient?.toLowerCase().includes('#f8fafc') ||
+        cover.backgroundGradient?.toLowerCase().includes('#f2f4f7')
+      );
     const fallbackLightBg =
-      cover.backgroundType === 'color' &&
-      ['#ffffff', '#f1f5f9', '#f2f4f7'].includes((cover.backgroundColor || '').toLowerCase());
+      (cover.backgroundType === 'color' &&
+        ['#ffffff', '#f1f5f9', '#f2f4f7'].includes((cover.backgroundColor || '').toLowerCase())) ||
+      isGradientLight;
     const explicitTextRgb = cover.textColor ? hexToRgb(cover.textColor, [255, 255, 255]) : null;
     const useDarkText = explicitTextRgb ? isDarkColor(explicitTextRgb) : fallbackLightBg;
 
@@ -200,11 +208,11 @@ export async function buildPdfDocument(project: SopProject, options: ExportConte
     const cardBorderRgb: [number, number, number] = useDarkText ? [226, 232, 240] : [51, 65, 85];
 
     // Background Render
-    if (cover.backgroundType === 'image' && cover.backgroundImage) {
+    if ((cover.backgroundType === 'image' || cover.backgroundType === 'gradient') && cover.backgroundImage) {
       try {
         doc.addImage(cover.backgroundImage, 'JPEG', 0, 0, pageWidth, pageHeight, undefined, 'FAST');
         const overlayOpacity = cover.backgroundOverlayOpacity ?? 0.45;
-        if (overlayOpacity > 0) {
+        if (overlayOpacity > 0 && cover.backgroundType === 'image') {
           try {
             const anyDoc = doc as any;
             if (typeof anyDoc.saveGraphicsState === 'function') {
@@ -232,16 +240,18 @@ export async function buildPdfDocument(project: SopProject, options: ExportConte
       doc.setFillColor(...bgRgb);
       doc.rect(0, 0, pageWidth, pageHeight, 'F');
     } else {
-      // Gradient Presets mapped to rich solid base
+      // Gradient Presets mapped to rich solid base if no rasterized gradient image is available
       let bgRgb: [number, number, number] = [15, 23, 42];
-      if (cover.backgroundGradient?.includes('#1e3a8a')) bgRgb = [30, 58, 138];
-      else if (cover.backgroundGradient?.includes('#0077C8')) bgRgb = [0, 119, 200];
-      else if (cover.backgroundGradient?.includes('#00B3E3')) bgRgb = [0, 179, 227];
-      else if (cover.backgroundGradient?.includes('#00C3B2')) bgRgb = [0, 195, 178];
-      else if (cover.backgroundGradient?.includes('#064e3b')) bgRgb = [6, 78, 59];
-      else if (cover.backgroundGradient?.includes('#312e81')) bgRgb = [49, 46, 129];
-      else if (cover.backgroundGradient?.includes('#581c87')) bgRgb = [88, 28, 135];
-      else if (cover.backgroundGradient?.includes('#f8fafc')) bgRgb = [248, 250, 252];
+      const gradLower = (cover.backgroundGradient || '').toLowerCase();
+      if (gradLower.includes('#1428a0')) bgRgb = [20, 40, 160];
+      else if (gradLower.includes('#0077c8')) bgRgb = [0, 119, 200];
+      else if (gradLower.includes('#00b3e3')) bgRgb = [0, 179, 227];
+      else if (gradLower.includes('#00c3b2')) bgRgb = [0, 195, 178];
+      else if (gradLower.includes('#1e3a8a')) bgRgb = [30, 58, 138];
+      else if (gradLower.includes('#064e3b')) bgRgb = [6, 78, 59];
+      else if (gradLower.includes('#312e81')) bgRgb = [49, 46, 129];
+      else if (gradLower.includes('#581c87')) bgRgb = [88, 28, 135];
+      else if (gradLower.includes('#f2f4f7') || gradLower.includes('#ffffff') || gradLower.includes('#f8fafc')) bgRgb = [242, 244, 247];
       doc.setFillColor(...bgRgb);
       doc.rect(0, 0, pageWidth, pageHeight, 'F');
     }
@@ -301,10 +311,20 @@ export async function buildPdfDocument(project: SopProject, options: ExportConte
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(...subTextRgb);
 
+    const showAuthor = cover.showAuthor !== false;
+    const showOrg = cover.showOrganization !== false;
+    const showDate = cover.showDate !== false;
+
     const orgOrDept = cover.organization || project.department || 'Operations';
-    doc.text(`Author: ${cover.author || project.author || 'Team Member'}`, margin + 14, metaCardY + 22);
-    doc.text(`Department: ${orgOrDept}`, margin + 14, metaCardY + 38);
-    doc.text(`Date: ${formattedDate}`, margin + 270, metaCardY + 22);
+    if (showAuthor) {
+      doc.text(`Author: ${cover.author || project.author || 'Team Member'}`, margin + 14, metaCardY + 22);
+    }
+    if (showOrg) {
+      doc.text(`Department: ${orgOrDept}`, margin + 14, metaCardY + 38);
+    }
+    if (showDate) {
+      doc.text(`Date: ${formattedDate}`, margin + 270, metaCardY + 22);
+    }
     doc.text(`Scope: ${project.steps.length} Sequential Steps`, margin + 270, metaCardY + 38);
 
     // Prepare for next page (TOC or Steps)

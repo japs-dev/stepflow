@@ -119,12 +119,21 @@ export const CoverPageStudio: React.FC = () => {
 
   const isLightBackground =
     (cover.backgroundType === 'color' && isHexColorLight(cover.backgroundColor)) ||
-    (cover.backgroundType === 'gradient' && Boolean(cover.backgroundGradient?.includes('#ffffff') || cover.backgroundGradient?.includes('#f8fafc')));
+    (cover.backgroundType === 'gradient' &&
+      Boolean(
+        cover.backgroundGradient?.includes('#ffffff') ||
+        cover.backgroundGradient?.includes('#f8fafc') ||
+        cover.backgroundGradient?.includes('#F2F4F7') ||
+        cover.backgroundGradient?.includes('#f2f4f7')
+      ));
+
+  const primaryColor = activeProject.theme?.primaryColor || '#0f172a';
+  const accentColor = activeProject.theme?.accentColor || '#0077C8';
 
   const textColor = isLightBackground ? '#0f172a' : '#ffffff';
-  const subtextColor = isLightBackground ? '#475569' : '#94a3b8';
-  const badgeBorder = isLightBackground ? 'rgba(15,23,42,0.15)' : 'rgba(255,255,255,0.2)';
-  const cardBg = isLightBackground ? 'rgba(15,23,42,0.04)' : 'rgba(255,255,255,0.06)';
+  const subtextColor = isLightBackground ? '#475569' : '#cbd5e1';
+  const cardBorder = isLightBackground ? 'rgba(15,23,42,0.12)' : 'rgba(255,255,255,0.18)';
+  const cardBg = isLightBackground ? 'rgba(241,245,249,0.85)' : 'rgba(30,41,59,0.75)';
 
   return (
     <div className="w-full h-full flex flex-col overflow-y-auto bg-zinc-100/60 dark:bg-zinc-950/60 p-4 md:p-8 items-center select-none">
@@ -149,7 +158,13 @@ export const CoverPageStudio: React.FC = () => {
             }}
             className="relative w-full max-w-[560px] aspect-[1/1.414] rounded-xl shadow-2xl overflow-hidden border border-zinc-300/60 dark:border-zinc-700/60 transition-all flex flex-col justify-between select-text"
           >
-            {/* Optional Dark / Color Overlay on Image or Gradient for crystal-clear readability */}
+            {/* Top Accent Ribbon (Matches PDF 6pt Accent Bar) */}
+            <div
+              style={{ backgroundColor: accentColor }}
+              className="absolute top-0 left-0 right-0 h-1.5 z-20"
+            />
+
+            {/* Optional Dark / Color Overlay on Image for crystal-clear readability */}
             {cover.backgroundType === 'image' && (
               <div
                 style={{
@@ -159,27 +174,22 @@ export const CoverPageStudio: React.FC = () => {
               />
             )}
 
-            {/* Top Accent Ribbon / Status Bar */}
-            <div className="relative z-10 p-6 md:p-8 flex items-center justify-between">
+            {/* Header: Standard Operating Procedure Pill + Version */}
+            <div className="relative z-10 pt-8 px-6 md:px-8 flex items-center justify-between">
               <div
                 style={{
-                  backgroundColor: cardBg,
-                  borderColor: badgeBorder,
-                  color: textColor
+                  backgroundColor: primaryColor,
+                  color: '#ffffff'
                 }}
-                className="inline-flex items-center gap-2 px-3 py-1 rounded-full border text-[11px] font-bold tracking-wider uppercase backdrop-blur-md"
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-sm text-[10px] font-bold tracking-wider uppercase shadow-xs"
               >
-                <span>Standard Operating Procedure</span>
+                <span>STANDARD OPERATING PROCEDURE</span>
               </div>
 
               {cover.showVersion && (
                 <div
-                  style={{
-                    backgroundColor: cardBg,
-                    borderColor: badgeBorder,
-                    color: subtextColor
-                  }}
-                  className="px-2.5 py-1 rounded-md border text-[10px] font-mono font-medium backdrop-blur-md"
+                  style={{ color: subtextColor }}
+                  className="text-xs font-mono font-bold"
                 >
                   v{cover.version || activeProject.version || '1.0.0'}
                 </div>
@@ -190,8 +200,8 @@ export const CoverPageStudio: React.FC = () => {
             <div className="relative z-10 px-6 md:px-8 my-auto flex flex-col justify-center">
               {cover.layout === 'executive' && (
                 <div
-                  style={{ borderColor: badgeBorder }}
-                  className="w-16 h-1 mb-4 bg-blue-500 rounded-full"
+                  style={{ backgroundColor: accentColor }}
+                  className="w-16 h-1 mb-4 rounded-full"
                 />
               )}
 
@@ -215,112 +225,63 @@ export const CoverPageStudio: React.FC = () => {
                 </p>
               )}
 
-              {/* Layout Decorative Line */}
+              {/* Layout Decorative Line (Matches PDF 44pt accent line) */}
               {cover.layout === 'modern' && (
-                <div className="mt-6 flex items-center gap-2">
-                  <div className="h-1 w-12 bg-blue-500 rounded-full" />
-                  <div className="h-0.5 flex-1 bg-white/20 rounded-full" />
-                </div>
+                <div
+                  style={{ backgroundColor: accentColor }}
+                  className="mt-5 w-11 h-1 rounded-full"
+                />
               )}
             </div>
 
-            {/* Bottom Metadata Block */}
-            <div className="relative z-10 p-6 md:p-8 border-t border-white/10 dark:border-white/5 backdrop-blur-sm">
-              <div className="grid grid-cols-2 gap-3 text-left">
-                {cover.showAuthor && (
-                  <div
-                    style={{ backgroundColor: cardBg, borderColor: badgeBorder }}
-                    className="p-2.5 rounded-lg border backdrop-blur-md flex items-center gap-2.5"
-                  >
-                    <User style={{ color: subtextColor }} className="w-4 h-4 shrink-0" />
-                    <div className="min-w-0">
-                      <div
-                        style={{ color: subtextColor }}
-                        className="text-[9px] uppercase tracking-wider font-semibold"
-                      >
-                        Author
-                      </div>
-                      <div
-                        style={{ color: textColor }}
-                        className="text-xs font-semibold truncate"
-                      >
-                        {cover.author || activeProject.author || 'StepFlow Team'}
-                      </div>
+            {/* Bottom Metadata Block (Matches PDF Bottom Metadata Card) */}
+            <div className="relative z-10 p-6 md:p-8">
+              <div
+                style={{
+                  backgroundColor: cardBg,
+                  borderColor: cardBorder
+                }}
+                className="rounded-lg border p-3.5 backdrop-blur-md grid grid-cols-2 gap-y-2 gap-x-4 text-xs font-normal"
+              >
+                <div>
+                  {cover.showAuthor !== false && (
+                    <div style={{ color: subtextColor }} className="truncate">
+                      <span className="font-semibold text-zinc-400">Author:</span>{' '}
+                      <span style={{ color: textColor }} className="font-medium">
+                        {cover.author || activeProject.author || 'Team Member'}
+                      </span>
                     </div>
-                  </div>
-                )}
-
-                {cover.showOrganization && (
-                  <div
-                    style={{ backgroundColor: cardBg, borderColor: badgeBorder }}
-                    className="p-2.5 rounded-lg border backdrop-blur-md flex items-center gap-2.5"
-                  >
-                    <Building2 style={{ color: subtextColor }} className="w-4 h-4 shrink-0" />
-                    <div className="min-w-0">
-                      <div
-                        style={{ color: subtextColor }}
-                        className="text-[9px] uppercase tracking-wider font-semibold"
-                      >
-                        Department / Org
-                      </div>
-                      <div
-                        style={{ color: textColor }}
-                        className="text-xs font-semibold truncate"
-                      >
+                  )}
+                  {cover.showOrganization !== false && (
+                    <div style={{ color: subtextColor }} className="truncate mt-1">
+                      <span className="font-semibold text-zinc-400">Department:</span>{' '}
+                      <span style={{ color: textColor }} className="font-medium">
                         {cover.organization || activeProject.department || 'Operations'}
-                      </div>
+                      </span>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
 
-                {cover.showDate && (
-                  <div
-                    style={{ backgroundColor: cardBg, borderColor: badgeBorder }}
-                    className="p-2.5 rounded-lg border backdrop-blur-md flex items-center gap-2.5"
-                  >
-                    <Calendar style={{ color: subtextColor }} className="w-4 h-4 shrink-0" />
-                    <div className="min-w-0">
-                      <div
-                        style={{ color: subtextColor }}
-                        className="text-[9px] uppercase tracking-wider font-semibold"
-                      >
-                        Publication Date
-                      </div>
-                      <div
-                        style={{ color: textColor }}
-                        className="text-xs font-semibold truncate"
-                      >
+                <div>
+                  {cover.showDate !== false && (
+                    <div style={{ color: subtextColor }} className="truncate">
+                      <span className="font-semibold text-zinc-400">Date:</span>{' '}
+                      <span style={{ color: textColor }} className="font-medium">
                         {formattedDate}
-                      </div>
+                      </span>
                     </div>
-                  </div>
-                )}
-
-                <div
-                  style={{ backgroundColor: cardBg, borderColor: badgeBorder }}
-                  className="p-2.5 rounded-lg border backdrop-blur-md flex items-center gap-2.5"
-                >
-                  <Layers style={{ color: subtextColor }} className="w-4 h-4 shrink-0" />
-                  <div className="min-w-0">
-                    <div
-                      style={{ color: subtextColor }}
-                      className="text-[9px] uppercase tracking-wider font-semibold"
-                    >
-                      Scope
-                    </div>
-                    <div
-                      style={{ color: textColor }}
-                      className="text-xs font-semibold truncate"
-                    >
-                      {activeProject.steps.length} Steps
-                    </div>
+                  )}
+                  <div style={{ color: subtextColor }} className="truncate mt-1">
+                    <span className="font-semibold text-zinc-400">Scope:</span>{' '}
+                    <span style={{ color: textColor }} className="font-medium">
+                      {activeProject.steps.length} Sequential Steps
+                    </span>
                   </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
-
       </div>
     </div>
   );

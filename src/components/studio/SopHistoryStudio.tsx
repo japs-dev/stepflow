@@ -286,6 +286,74 @@ export const SopHistoryStudio: React.FC = () => {
             Snapshot includes {selectedEntry.snapshot.steps.length} steps and was saved as version {selectedEntry.snapshot.version}.
           </div>
         )}
+
+        {/* Live Document Changelog Table Preview (Matches PDF 1:1) */}
+        <div className="mt-6 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5 shadow-xs">
+          <div className="flex items-center justify-between pb-3 mb-3 border-b border-zinc-100 dark:border-zinc-800">
+            <div>
+              <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                Document Changelog (Exported PDF Preview)
+              </h3>
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                Exact table formatting and change summary rendered on Document Changelog pages.
+              </p>
+            </div>
+            <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400">
+              {historyEntries.length} Published Entries
+            </span>
+          </div>
+
+          <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-700">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-slate-100 dark:bg-zinc-800 text-[10px] font-bold text-slate-600 dark:text-zinc-300 uppercase tracking-wider border-b border-zinc-200 dark:border-zinc-700">
+                  <th className="py-2 px-3">Change Date</th>
+                  <th className="py-2 px-3">Editor</th>
+                  <th className="py-2 px-3">Changed Steps</th>
+                  <th className="py-2 px-3">Publish Summary</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                {historyEntries.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="py-4 px-3 text-center text-zinc-400">
+                      No published history yet. The initial draft will be recorded upon first publish.
+                    </td>
+                  </tr>
+                ) : (
+                  historyEntries.map((entry, idx) => {
+                    const prev = historyEntries[idx + 1];
+                    const diff = calculateHistoryChangeSummary(prev?.snapshot.steps || [], entry.snapshot.steps);
+                    const changesParts: string[] = [];
+                    if (diff.added) changesParts.push(`+${diff.added} added`);
+                    if (diff.updated) changesParts.push(`~${diff.updated} updated`);
+                    if (diff.removed) changesParts.push(`-${diff.removed} removed`);
+                    const changeLabel = changesParts.join(', ') || 'Minor adjustments';
+
+                    return (
+                      <tr key={entry.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/40 text-[11px]">
+                        <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
+                          {formatDate(entry.createdAt)}
+                        </td>
+                        <td className="py-2.5 px-3 font-medium text-zinc-900 dark:text-zinc-100 whitespace-nowrap">
+                          {entry.author || activeProject.author || 'Team Member'}
+                        </td>
+                        <td className="py-2.5 px-3 text-zinc-600 dark:text-zinc-400">
+                          <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800">
+                            {changeLabel}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-zinc-800 dark:text-zinc-200 font-medium">
+                          {entry.summary || 'Updated SOP content'}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </section>
     </div>
   );

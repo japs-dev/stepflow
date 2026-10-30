@@ -17,6 +17,7 @@ import {
 import { useSopStore, isDefaultStepTitle } from '../../store/useSopStore';
 import { SopStep, DEFAULT_COVER_PAGE_SETTINGS } from '../../types/sop';
 import { getCmdLabel } from '../../utils/platform';
+import { Switch } from '../common/Switch';
 
 interface StepOutlineProps {
   onCaptureScreenshot?: () => void;
@@ -270,22 +271,12 @@ export const StepOutline: React.FC<StepOutlineProps> = ({
                   </span>
                 </div>
 
-                <label
-                  className="relative inline-flex h-5 w-9 items-center cursor-pointer shrink-0"
-                  onClick={(e) => e.stopPropagation()}
+                <Switch
+                  checked={cover.enabled}
+                  onChange={(checked) => updateCoverPageSettings({ enabled: checked })}
                   title="Include Front Cover in Document"
-                >
-                  <input
-                    type="checkbox"
-                    checked={cover.enabled}
-                    onChange={(e) => updateCoverPageSettings({ enabled: e.target.checked })}
-                    className="sr-only peer"
-                  />
-                  <span className="absolute inset-0 rounded-full border border-zinc-300 bg-zinc-200 transition-colors peer-checked:border-zinc-900 peer-checked:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-700 dark:peer-checked:border-zinc-200 dark:peer-checked:bg-zinc-600" />
-                  <span className="absolute left-[2px] top-[2px] flex h-4 w-4 items-center justify-center rounded-full border border-zinc-300 bg-white text-[9px] font-bold text-zinc-800 shadow-sm transition-all peer-checked:left-[18px] peer-checked:border-zinc-900 dark:border-zinc-500 dark:bg-zinc-200 dark:text-zinc-900">
-                    <span className="opacity-0 transition-opacity peer-checked:opacity-100">✓</span>
-                  </span>
-                </label>
+                  ariaLabel="Include Front Cover in Document"
+                />
               </div>
             );
           })()}
@@ -317,22 +308,12 @@ export const StepOutline: React.FC<StepOutlineProps> = ({
                   </span>
                 </div>
 
-                <label
-                  className="relative inline-flex h-5 w-9 items-center cursor-pointer shrink-0"
-                  onClick={(e) => e.stopPropagation()}
+                <Switch
+                  checked={cover.showTableOfContents !== false}
+                  onChange={(checked) => updateCoverPageSettings({ showTableOfContents: checked })}
                   title="Include Table of Contents in Document"
-                >
-                  <input
-                    type="checkbox"
-                    checked={cover.showTableOfContents !== false}
-                    onChange={(e) => updateCoverPageSettings({ showTableOfContents: e.target.checked })}
-                    className="sr-only peer"
-                  />
-                  <span className="absolute inset-0 rounded-full border border-zinc-300 bg-zinc-200 transition-colors peer-checked:border-zinc-900 peer-checked:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-700 dark:peer-checked:border-zinc-200 dark:peer-checked:bg-zinc-600" />
-                  <span className="absolute left-[2px] top-[2px] flex h-4 w-4 items-center justify-center rounded-full border border-zinc-300 bg-white text-[9px] font-bold text-zinc-800 shadow-sm transition-all peer-checked:left-[18px] peer-checked:border-zinc-900 dark:border-zinc-500 dark:bg-zinc-200 dark:text-zinc-900">
-                    <span className="opacity-0 transition-opacity peer-checked:opacity-100">✓</span>
-                  </span>
-                </label>
+                  ariaLabel="Include Table of Contents in Document"
+                />
               </div>
             );
           })()}
@@ -364,29 +345,19 @@ export const StepOutline: React.FC<StepOutlineProps> = ({
                   </span>
                 </div>
 
-                <label
-                  className="relative inline-flex h-5 w-9 items-center cursor-pointer shrink-0"
-                  onClick={(e) => e.stopPropagation()}
+                <Switch
+                  checked={includeChangelog}
+                  onChange={(checked) =>
+                    updateProjectDetails({
+                      exportSettings: {
+                        ...(activeProject.exportSettings || {}),
+                        includeChangelog: checked
+                      }
+                    })
+                  }
                   title="Include SOP History Changelog in Document"
-                >
-                  <input
-                    type="checkbox"
-                    checked={includeChangelog}
-                    onChange={(e) =>
-                      updateProjectDetails({
-                        exportSettings: {
-                          ...(activeProject.exportSettings || {}),
-                          includeChangelog: e.target.checked
-                        }
-                      })
-                    }
-                    className="sr-only peer"
-                  />
-                  <span className="absolute inset-0 rounded-full border border-zinc-300 bg-zinc-200 transition-colors peer-checked:border-zinc-900 peer-checked:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-700 dark:peer-checked:border-zinc-200 dark:peer-checked:bg-zinc-600" />
-                  <span className="absolute left-[2px] top-[2px] flex h-4 w-4 items-center justify-center rounded-full border border-zinc-300 bg-white text-[9px] font-bold text-zinc-800 shadow-sm transition-all peer-checked:left-[18px] peer-checked:border-zinc-900 dark:border-zinc-500 dark:bg-zinc-200 dark:text-zinc-900">
-                    <span className="opacity-0 transition-opacity peer-checked:opacity-100">✓</span>
-                  </span>
-                </label>
+                  ariaLabel="Include SOP History Changelog in Document"
+                />
               </div>
             );
           })()}
